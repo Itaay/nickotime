@@ -45,7 +45,8 @@ const dateTime = t => new Date(t).toLocaleString(loc(), { weekday: 'short', day:
 
 function speedOpts() {
   const s = state.settings, bike = s.mode === 'bike';
-  return { normal: (bike ? s.bike : s.walk) / 3.6, min: (bike ? 8 : 3) / 3.6, max: (bike ? 30 : 8) / 3.6, step: (bike ? 0.5 : 0.25) / 3.6, minLeft: s.minLeft };
+  const n = bike ? s.bike : s.walk, band = bike ? 6 : 1.5; // only suggest paces near your usual one
+  return { normal: n / 3.6, min: Math.max(bike ? 6 : 2.5, n - band) / 3.6, max: (n + band) / 3.6, step: (bike ? 0.5 : 0.25) / 3.6, minLeft: s.minLeft };
 }
 
 // ---------- GPS (treated as untrustworthy: jamming/spoofing is common) ----------
@@ -75,19 +76,19 @@ async function wakeLock(on) {
 
 // ---------- UI helpers ----------
 const ICON = {
-  go: '<svg viewBox="0 0 24 24"><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="6" r="2.2"/><path d="M8 18h6.5a3.5 3.5 0 0 0 0-7h-5a3.5 3.5 0 0 1 0-7H16"/></svg>',
-  map: '<svg viewBox="0 0 24 24"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2zM9 4v14M15 6v14"/></svg>',
-  light: '<svg viewBox="0 0 24 24"><rect x="7.5" y="2" width="9" height="20" rx="4.5"/><circle cx="12" cy="7" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="17" r="1.6"/></svg>',
-  gear: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg>',
-  plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
-  locate: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>',
-  pin: '<svg viewBox="0 0 24 24"><path d="M12 22s7-6.3 7-12a7 7 0 0 0-14 0c0 5.7 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/></svg>',
-  walk: '<svg viewBox="0 0 24 24"><circle cx="13" cy="4" r="2"/><path d="m9 21 2.5-6.5L14 17v4M7 12l2.5-4 4 .5 2.5 3.5 2 1M11.5 14.5 13 8.5"/></svg>',
-  bike: '<svg viewBox="0 0 24 24"><circle cx="5.5" cy="16.5" r="3.5"/><circle cx="18.5" cy="16.5" r="3.5"/><path d="M5.5 16.5 9 9h6l3.5 7.5M9 9 12 16.5h-6.5M14 5h2.5l-1.5 4"/></svg>',
-  up: '<svg viewBox="0 0 24 24"><path d="m6 15 6-6 6 6"/></svg>',
-  down: '<svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>',
-  x: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>',
-  camera: '<svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>',
+  go: '<svg class="i" viewBox="0 0 24 24"><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="6" r="2.2"/><path d="M8 18h6.5a3.5 3.5 0 0 0 0-7h-5a3.5 3.5 0 0 1 0-7H16"/></svg>',
+  map: '<svg class="i" viewBox="0 0 24 24"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2zM9 4v14M15 6v14"/></svg>',
+  light: '<svg class="i" viewBox="0 0 24 24"><rect x="7.5" y="2" width="9" height="20" rx="4.5"/><circle cx="12" cy="7" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="17" r="1.6"/></svg>',
+  gear: '<svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg>',
+  plus: '<svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
+  locate: '<svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>',
+  pin: '<svg class="i" viewBox="0 0 24 24"><path d="M12 22s7-6.3 7-12a7 7 0 0 0-14 0c0 5.7 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/></svg>',
+  walk: '<svg class="i" viewBox="0 0 24 24"><circle cx="13" cy="4" r="2"/><path d="m9 21 2.5-6.5L14 17v4M7 12l2.5-4 4 .5 2.5 3.5 2 1M11.5 14.5 13 8.5"/></svg>',
+  bike: '<svg class="i" viewBox="0 0 24 24"><circle cx="5.5" cy="16.5" r="3.5"/><circle cx="18.5" cy="16.5" r="3.5"/><path d="M5.5 16.5 9 9h6l3.5 7.5M9 9 12 16.5h-6.5M14 5h2.5l-1.5 4"/></svg>',
+  up: '<svg class="i" viewBox="0 0 24 24"><path d="m6 15 6-6 6 6"/></svg>',
+  down: '<svg class="i" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>',
+  x: '<svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>',
+  camera: '<svg class="i" viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>',
 };
 
 function toast(msg) {
@@ -154,6 +155,7 @@ function render() {
   const v = views[cur.name];
   document.body.dataset.view = cur.name;
   document.querySelectorAll('#tabs a').forEach(a => a.classList.toggle('on', a.dataset.tab === (v.tab || cur.name)));
+  stopRunMap();
   main.innerHTML = v.html ? v.html(cur.id) : '';
   main.scrollTop = 0;
   v.mount?.(cur.id);
@@ -259,6 +261,7 @@ views.go = {
         <div class="bignum" id="p-eta">--:--</div>
         <div id="p-sub" class="sub"></div>
         <div id="p-tip" class="tip"></div>
+        <button class="btn primary big" data-act="start:${pair.join('>')}">${T('startGuide')}</button>
       </section>
       <section class="card">
         <div class="row-between"><h2>${T('whenToLeave')}</h2><span class="muted small">${T('next10')}</span></div>
@@ -273,10 +276,10 @@ views.go = {
       ${rs.map(r => `
       <section class="card route">
         <div class="row-between"><div><h3>${esc(r.name)}</h3><div class="muted small" id="r-info-${r.id}"></div></div>
-          <button class="btn primary" data-act="start:${r.id}">${T('start')}</button></div>
+          <button class="link small" data-act="nav:route:${r.id}">${T('editRoute')}</button></div>
         <div class="dots" id="r-dots-${r.id}"></div>
-        <button class="link small" data-act="nav:route:${r.id}">${T('editRoute')}</button>
       </section>`).join('')}
+      ${rs.length < 2 ? `<p class="muted small">${T('altHint')}</p>` : ''}
       <button class="btn ghost wide" data-act="newroute">${ICON.plus} ${T('newRoute')}</button>`;
   },
   tick() {
@@ -324,78 +327,171 @@ acts.newroute = () => {
   commit();
   nav('#/route/' + r.id);
 };
-acts.start = id => {
-  state.ui.run = { route: id, seg: 0, segStart: now(), at: false, near: false, started: now() };
+acts.start = key => {
+  const pair = key.split('>'), by = byId(), ms = models(), sp = speedOpts();
+  const opts = pairRoutes(pair).map(r => ({ r, legs: M.routeLegs(r, by) })).filter(x => x.legs);
+  if (!opts.length) return;
+  const best = opts.reduce((a, b) => M.simulate(a.legs, now(), sp.normal, ms, sp.minLeft).eta <= M.simulate(b.legs, now(), sp.normal, ms, sp.minLeft).eta ? a : b);
+  state.ui.run = { pair, route: best.r.id, leg: 0, d: best.legs[0].dist, t: now(), at: false, started: now() };
   save();
-  nav('#/run/' + id);
+  nav('#/run');
 };
 
-// ================= GO MODE =================
+// ================= GO MODE (live route map) =================
+// Every point of every route to the destination is coloured by what happens at the next light if you
+// are there now and keep your usual pace. Green bands drift along at walking speed: ride one and you
+// arrive on green. A route that is slower from a point is faded there. No GPS needed: tap where you are.
+const BAND = { g: '#10a95f', w: '#f0a020', l: '#e5484d', u: '#8a94a6', e: '#2f6bff' };
+let runMap = null, geo = null, youDot = null, lastRec = null, lastSave = 0;
+
+const pairRoutes = pair => state.routes.filter(r => r.from === pair[0] && r.to === pair[1]);
+const curGeo = () => geo?.find(x => x.r.id === state.ui.run?.route) || geo?.[0];
+const saveRun = force => { if (force || now() - lastSave > 5000) { lastSave = now(); save(); } };
+
+function buildGeo(pair) {
+  const by = byId();
+  const g = pairRoutes(pair).map(r => { const legs = M.routeLegs(r, by); return legs && { r, legs, S: M.samples(legs) }; }).filter(Boolean);
+  // for each point: the nearest point (within 30 m) on every other route, to compare ETAs from "here"
+  for (const a of g) a.near = a.S.map(s => g.filter(b => b !== a).map(b => {
+    let j = -1, off = 30;
+    b.S.forEach((x, i) => { const dd = M.haversine(s, x); if (dd < off) { off = dd; j = i; } });
+    return j < 0 ? null : { b, j, off };
+  }).filter(Boolean));
+  return g;
+}
+function nearestOnRoutes(p, maxM) {
+  let best = null;
+  for (const g of geo || []) g.S.forEach((s, k) => { const dd = M.haversine(p, s); if (dd < (best?.dd ?? maxM)) best = { g, k, dd }; });
+  return best;
+}
+function setPos(g, k) {
+  const s = g.S[k];
+  Object.assign(state.ui.run, { route: g.r.id, leg: s.leg, d: s.d, t: now(), at: s.d < 5 });
+  saveRun(true);
+}
+function stopRunMap() { if (runMap) { runMap.remove(); runMap = null; geo = null; youDot = null; } }
+
 views.run = {
   tab: 'go',
-  html(id) {
-    const r = routeOf(id), legs = r && M.routeLegs(r, byId()), run = state.ui.run;
-    if (!legs || !run || run.route !== id) return `<p class="card">${T('noRun')}</p>`;
-    const leg = legs[run.seg], l = leg.light && light(leg.light);
-    return `
-      <div class="runhead"><div><div class="muted small">${esc(r.name)}</div>
-        <div class="muted small">${l ? T('lightXofY', run.seg + 1, r.via.length) : T('lastLeg')}</div></div>
-        <div class="eta"><div class="muted small">${T('arrive')}</div><b id="g-eta">--:--</b></div></div>
-      <div class="dots big" id="g-dots"></div>
-      <section class="hero run">
-        ${l ? `<div class="target"><h2>${esc(l.name)}</h2><span id="g-gps" class="gpschip"></span></div>
-          ${ring(l.id, 'xl')}
-          <div class="dist" id="g-dist"></div>` : `<h2>${esc(place(r.to)?.name)}</h2><div class="dist" id="g-dist"></div>`}
+  html() {
+    if (!state.ui.run?.pair) return `<p class="card">${T('noRun')}</p>`;
+    return `<div class="runwrap">
+      <div class="runmapbox"><div id="runmap"></div>
+        <div class="maplegend"><span><i style="background:${BAND.g}"></i>${T('bandG')}</span><span><i style="background:${BAND.l}"></i>${T('bandR')}</span><span><i class="faded"></i>${T('bandF')}</span></div></div>
+      <section class="panel">
+        <div class="row-between"><div class="grow"><b id="g-route"></b><div class="muted small" id="g-next"></div></div>
+          <div class="eta"><div class="muted small">${T('arrive')}</div><b id="g-eta">--:--</b></div></div>
+        <div id="g-better" class="better" hidden></div>
         <div class="advice" id="g-adv"></div>
-      </section>
-      ${l ? `
-        <div class="grid2">
-          <button class="btn" data-act="at">${T('imHere')}</button>
-          <button class="btn primary" data-act="advance">${T('crossed')}</button>
-        </div>
+        <div class="grid2"><button class="btn" data-act="at" id="g-at">${T('imHere')}</button><button class="btn primary" data-act="advance" id="g-next-btn">${T('crossed')}</button></div>
         <div class="report"><span class="muted small">${T('reportNow')}</span>
-          <button class="btn g" data-act="ev:${l.id}:G">${T('greenNow')}</button>
-          <button class="btn r" data-act="ev:${l.id}:R">${T('redNow')}</button>
-          ${l.kind === 'button' ? `<button class="btn" data-act="ev:${l.id}:P">${T('pressed')}</button>` : ''}
-        </div>` : `<button class="btn primary wide" data-act="advance">${T('finish')}</button>`}
-      <button class="link small center" data-act="endrun">${T('endRun')}</button>
-      <p class="muted tiny center">${T('safety')}</p>`;
+          <button class="btn g" data-act="report:G">${T('greenNow')}</button>
+          <button class="btn r" data-act="report:R">${T('redNow')}</button>
+          <button class="btn" data-act="report:P" id="g-press">${T('pressed')}</button></div>
+        <div class="row-between"><span id="g-gps" class="gpschip"></span><button class="link small" data-act="endrun">${T('endRun')}</button></div>
+        <p class="muted tiny">${T('tapWhere')} ${T('safety')}</p>
+      </section></div>`;
   },
-  tick(id) {
-    const r = routeOf(id), run = state.ui.run, legs = r && M.routeLegs(r, byId());
-    if (!legs || !run || run.route !== id || !$('#g-adv')) return;
-    const leg = legs[run.seg], sp = speedOpts(), ms = models(), t = now();
-    const good = gpsGood();
-    let d;
-    if (run.at) d = 0;
-    else if (good) {
-      const raw = M.haversine(gps.fix, leg.to);
-      d = raw * 1.1; // shortcut: near the target the street path is almost straight
-      if (gps.fix.acc < 25) {
-        if (raw < 20) run.near = true;
-        else if (run.near && raw > 30) return acts.advance();
-      }
-    } else d = Math.max(0, leg.dist - (t - run.segStart) / 1000 * sp.normal);
-    const gchip = $('#g-gps');
-    if (gchip) { gchip.textContent = good ? T('gpsOk') : T('gpsOff'); gchip.dataset.ok = good; }
-    $('#g-dist').textContent = d < 8 ? T('atLight') : `${good ? '' : '~'}${meters(d)}`;
-    const rest = legs.slice(run.seg), adv = $('#g-adv');
+  mount() {
+    const run = state.ui.run;
+    if (!run?.pair) return;
+    geo = buildGeo(run.pair);
+    if (!geo.length) return;
+    runMap = L.map('runmap', { zoomControl: false });
+    addTiles(runMap);
+    runMap.fitBounds(geo.flatMap(g => g.S.map(s => [s.lat, s.lng])), { padding: [28, 28] });
+    for (const g of geo) g.lines = g.S.slice(0, -1).map((s, k) =>
+      L.polyline([[s.lat, s.lng], [g.S[k + 1].lat, g.S[k + 1].lng]], { weight: 8, lineCap: 'round', interactive: false }).addTo(runMap));
+    const ids = new Set(geo.flatMap(g => g.r.via));
+    for (const l of state.lights.filter(l => ids.has(l.id))) L.marker([l.lat, l.lng], {
+      interactive: false, icon: L.divIcon({ className: '', html: `<div class="lightmk">${ring(l.id, 'sm')}</div>`, iconSize: [0, 0] }),
+    }).addTo(runMap);
+    for (const id of run.pair) { const p = place(id); if (p) L.marker([p.lat, p.lng], { interactive: false, icon: L.divIcon({ className: '', html: `<div class="pinmk">${ICON.pin}<span>${esc(p.name)}</span></div>`, iconSize: [0, 0] }) }).addTo(runMap); }
+    youDot = L.circleMarker([place(run.pair[0]).lat, place(run.pair[0]).lng], { radius: 9, weight: 3, color: '#fff', fillColor: '#2f6bff', fillOpacity: 1, interactive: false }).addTo(runMap);
+    runMap.on('click', e => {
+      const n = nearestOnRoutes({ lat: e.latlng.lat, lng: e.latlng.lng }, 60);
+      if (!n) return toast(T('tapLine'));
+      setPos(n.g, n.k);
+      navigator.vibrate?.(20);
+      tick();
+    });
+  },
+  tick() {
+    const run = state.ui.run;
+    if (!run?.pair || !geo?.length || !runMap) return;
+    const t = now(), sp = speedOpts(), ms = models(), good = gpsGood();
+    let g = curGeo();
+    // 1. where am I: trusted GPS snaps to the nearest route point; otherwise assume the advice is followed
+    const n = good && nearestOnRoutes(gps.fix, 50);
+    if (n) { g = n.g; const s = g.S[n.k]; Object.assign(run, { route: g.r.id, leg: s.leg, d: s.d, t, at: s.d < 8 }); }
+    else {
+      const dt = Math.max(0, (t - (run.t || t)) / 1000);
+      run.t = t;
+      if (!run.at) { run.d -= (lastRec ?? sp.normal) * dt; if (run.d <= 0) { run.d = 0; run.at = true; } }
+      const lg = g.legs[run.leg];
+      if (run.at && lg.light && run.leg < g.legs.length - 1 && M.crossAt(ms[lg.light], t, sp.minLeft).t <= t) // crossed on green
+        Object.assign(run, { leg: run.leg + 1, d: g.legs[run.leg + 1].dist, at: false });
+    }
+    saveRun();
+    const leg = g.legs[run.leg];
+
+    // 2. ribbons
+    for (const x of geo) x.sim = x.S.map(s => M.simulate([{ dist: s.d, light: x.legs[s.leg].light }, ...x.legs.slice(s.leg + 1)], t, sp.normal, ms, sp.minLeft));
+    const altBest = (x, k) => Math.min(Infinity, ...x.near[k].map(nb => nb.b.sim[nb.j].eta + nb.off / sp.normal * 1000));
+    for (const x of geo) {
+      let faded = false; // decided where routes still share a street, carried along the branch after the fork
+      x.lines.forEach((line, k) => {
+        const s = x.S[k], a = x.sim[k].at[0], lit = x.legs[s.leg].light;
+        const band = !lit ? 'e' : !a.known ? 'u' : a.cross - a.arrive < 1500 ? 'g' : a.cross - a.arrive < 20e3 ? 'w' : 'l';
+        if (x.near[k].length) faded = x.sim[k].eta > altBest(x, k) + 10e3;
+        const key = band + faded;
+        if (line._key === key) return;
+        line._key = key;
+        line.setStyle({ color: BAND[band], opacity: faded ? 0.22 : 0.95, weight: faded ? 5 : 8 });
+        if (!faded) line.bringToFront();
+      });
+    }
+
+    // 3. me
+    const f = leg.dist ? 1 - run.d / leg.dist : 1;
+    youDot.setLatLng([leg.from.lat + (leg.to.lat - leg.from.lat) * f, leg.from.lng + (leg.to.lng - leg.from.lng) * f]);
+    youDot.setStyle(good && n ? { fillColor: '#2f6bff', color: '#fff' } : { fillColor: '#fff', color: '#2f6bff' });
+    youDot.bringToFront();
+
+    // 4. panel
+    const l = leg.light && light(leg.light);
+    const distTxt = run.d < 8 ? T('atLight') : `${n ? '' : '~'}${meters(run.d)}`;
+    $('#g-route').textContent = g.r.name;
+    $('#g-next').textContent = l ? `${T('nextLight')}: ${l.name} · ${distTxt}` : `${place(g.r.to)?.name} · ${distTxt}`;
+    const chip = $('#g-gps');
+    chip.textContent = n ? T('gpsOk') : good ? T('gpsOffRoute') : T('gpsOff');
+    chip.dataset.ok = !!n;
+    $('#g-press').hidden = !(l && l.kind === 'button');
+    $('#g-at').hidden = !l;
+    $('#g-next-btn').textContent = l ? T('crossed') : T('finish');
+    let k = g.S.findIndex(s => s.leg === run.leg && s.d <= run.d + 1e-6);
+    if (k < 0) k = g.S.length - 1;
+    const mine = g.sim[k].eta, alt = g.near[k].reduce((b, nb) => {
+      const e = nb.b.sim[nb.j].eta + nb.off / sp.normal * 1000;
+      return e < b.e ? { e, r: nb.b.r } : b;
+    }, { e: Infinity });
+    const better = $('#g-better');
+    better.hidden = !(alt.e < mine - 10e3);
+    if (!better.hidden) better.textContent = T('betterRoute', alt.r.name, dur(mine - alt.e));
+
+    const adv = $('#g-adv'), d = run.d;
     if (!leg.light) {
+      lastRec = sp.normal;
       $('#g-eta').textContent = hms(t + d / sp.normal * 1000);
-      adv.innerHTML = `<div class="pace">${T('almost')}</div>`;
+      adv.innerHTML = `<div class="pace small">${T('almost')}</div>`;
       return;
     }
-    const p = M.pace(d, rest, t, ms, sp);
+    const m = ms[leg.light], st = M.stateAt(m, t);
+    const p = M.pace(d, g.legs.slice(run.leg), t, ms, sp);
     $('#g-eta').textContent = hms(p.rec.eta);
-    // upcoming lights, coloured by what happens at the recommended pace
-    const sim = M.simulate(rest.slice(1), p.rec.cross, sp.normal, ms, sp.minLeft);
-    const done = legs.slice(0, run.seg).filter(x => x.light).length;
-    $('#g-dots').innerHTML = [...Array(done).fill('<span class="dot done"></span>'),
-      `<span class="dot cur ${p.rec.wait0 < 1500 ? 'g' : 'r'}"></span>`,
-      ...sim.at.map(a => `<span class="dot ${!a.known ? 'u' : a.cross - a.arrive < 1500 ? 'g' : 'r'}"></span>`)].join('<i></i>');
-    const m = ms[leg.light];
-    const st = M.stateAt(m, t);
+    lastRec = p.rec.s;
     if (!st.known && !(m.kind === 'button' && m.delay != null)) {
+      lastRec = sp.normal;
       adv.innerHTML = `<div class="pace small">${T('noData')}</div><button class="btn" data-act="nav:measure:${leg.light}">${T('measureNow')}</button>`;
       return;
     }
@@ -406,43 +502,49 @@ views.run = {
         : `<div class="pace wait">${T('waitFor', dur(c.t - t))}</div><div class="sub">${m.kind === 'button' && !st.known ? T('pressBtn') : T('greenAt', hms(c.t))}</div>`;
       return;
     }
-    const diff = p.rec.s - sp.normal;
-    const mood = diff > 0.1 ? 'hurry' : diff < -0.1 ? 'easy' : 'keep';
+    const diff = p.rec.s - sp.normal, mood = diff > 0.1 ? 'hurry' : diff < -0.1 ? 'easy' : 'keep';
     const lost = p.normal.eta - p.best;
-    const you = good && gps.fix.speed != null ? `<div class="you">${T('yourSpeed', kmh(gps.fix.speed))}</div>` : '';
+    const you = n && gps.fix.speed != null ? ` · ${T('yourSpeed', kmh(gps.fix.speed))}` : '';
     adv.innerHTML = `
-      <div class="label">${T('mood_' + mood)}</div>
-      <div class="pace ${mood}">${kmh(p.rec.s)} <small>${T('kmh')}</small></div>
-      <div class="sub">${p.rec.wait0 < 1500 ? T('arriveGreen') : T('waitThere', dur(p.rec.wait0))}</div>
-      ${lost > 3000 ? `<div class="sub warn">${T('normalLoses', kmh(sp.normal), dur(lost))}</div>` : ''}${you}`;
+      <div class="advrow"><div class="pace ${mood}">${kmh(p.rec.s)} <small>${T('kmh')}</small></div>
+      <div><div class="label">${T('mood_' + mood)}</div>
+      <div class="sub">${p.rec.wait0 < 1500 ? T('arriveGreen') : T('waitThere', dur(p.rec.wait0))}${you}</div>
+      ${lost > 3000 ? `<div class="sub warn">${T('normalLoses', kmh(sp.normal), dur(lost))}</div>` : ''}</div></div>`;
   },
 };
-acts.at = () => { state.ui.run.at = true; save(); tick(); };
+acts.report = e => {
+  const g = curGeo(), lid = g?.legs[state.ui.run.leg]?.light;
+  if (lid) addEvent(lid, e);
+};
+acts.at = () => { Object.assign(state.ui.run, { d: 0, at: true, t: now() }); saveRun(true); tick(); };
 acts.advance = () => {
-  const run = state.ui.run, r = routeOf(run?.route), legs = r && M.routeLegs(r, byId());
-  if (!legs) return nav('#/go');
-  Object.assign(run, { seg: run.seg + 1, segStart: now(), at: false, near: false });
-  if (run.seg >= legs.length) {
+  const run = state.ui.run, g = curGeo();
+  if (!g) return nav('#/go');
+  if (run.leg >= g.legs.length - 1) {
     toast(T('arrived', dur(now() - run.started)));
     state.ui.run = null;
     save();
     return nav('#/go');
   }
-  save();
-  render();
+  Object.assign(run, { leg: run.leg + 1, d: g.legs[run.leg + 1].dist, at: false, t: now() });
+  saveRun(true);
+  tick();
 };
 acts.endrun = () => { state.ui.run = null; save(); nav('#/go'); };
 
 // ================= MAP =================
 let map, markerLayer, meDot;
+function addTiles(m) {
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, crossOrigin: true, attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>',
+  }).addTo(m);
+  m.attributionControl.setPrefix('Leaflet');
+}
 function ensureMap() {
   if (map) return;
   const v = state.ui.view || { lat: 32.0853, lng: 34.7818, z: 15 };
-  map = L.map('map', { zoomControl: false, attributionControl: true }).setView([v.lat, v.lng], v.z);
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19, crossOrigin: true, attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>',
-  }).addTo(map);
-  map.attributionControl.setPrefix('Leaflet');
+  map = L.map('map', { zoomControl: false }).setView([v.lat, v.lng], v.z);
+  addTiles(map);
   markerLayer = L.layerGroup().addTo(map);
   map.on('moveend', () => { const c = map.getCenter(); state.ui.view = { lat: c.lat, lng: c.lng, z: map.getZoom() }; save(); });
 }
@@ -912,6 +1014,7 @@ async function boot() {
   applyStatic();
   navigator.storage?.persist?.();
   addEventListener('hashchange', route);
+  addEventListener('resize', () => { map?.invalidateSize(); runMap?.invalidateSize(); });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) { gpsOff(); wakeLock(false); } else render();
   });

@@ -1,5 +1,5 @@
 // Offline: app files cache-first (bump V on release), map tiles cached as you view them.
-const V = 'nickotime-v1';
+const V = 'nickotime-v2';
 const ASSETS = ['./', 'index.html', 'style.css', 'app.js', 'model.js', 'store.js', 'i18n.js', 'manifest.webmanifest',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'vendor/leaflet/leaflet.js', 'vendor/leaflet/leaflet.css'];
 const TILES = 'tiles';

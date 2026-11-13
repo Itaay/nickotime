@@ -175,5 +175,20 @@ export function pace(d, rest, t, models, { normal, min, max, step, minLeft = 3 }
 export function routeLegs(route, byId) {
   const pts = [byId[route.from], ...route.via.map(id => byId[id]), byId[route.to]];
   if (pts.some(p => !p || p.lat == null)) return null;
-  return pts.slice(1).map((p, i) => ({ dist: haversine(pts[i], p) * DETOUR, light: i < route.via.length ? p.id : null, to: p }));
+  return pts.slice(1).map((p, i) => ({ dist: haversine(pts[i], p) * DETOUR, light: i < route.via.length ? p.id : null, from: pts[i], to: p }));
+}
+
+// Points every ~step m along the drawn route; d = street distance left to the end of that leg.
+export function samples(legs, step = 8) {
+  const out = [];
+  legs.forEach((L, i) => {
+    const n = Math.max(1, Math.round(L.dist / step));
+    for (let k = 0; k < n; k++) {
+      const f = k / n;
+      out.push({ lat: L.from.lat + (L.to.lat - L.from.lat) * f, lng: L.from.lng + (L.to.lng - L.from.lng) * f, leg: i, d: L.dist * (1 - f) });
+    }
+  });
+  const last = legs.at(-1);
+  out.push({ lat: last.to.lat, lng: last.to.lng, leg: legs.length - 1, d: 0 });
+  return out;
 }

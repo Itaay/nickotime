@@ -59,4 +59,12 @@ const pc = M.pace(70, legs, tStart, models, { normal: 1.4, min: 0.8, max: 2.2, s
 // 70m at 1.4 m/s = 50s -> wait 10s; slower ~1.17 m/s gets there at green with same ETA
 assert.ok(pc.rec.s < 1.4 && pc.rec.eta <= pc.normal.eta + 2000 && pc.rec.wait0 < 1000, JSON.stringify(pc));
 
+// route sampling
+const rl = M.routeLegs({ from: 'A', via: ['a'], to: 'B' }, { A: { lat: 32, lng: 34.78 }, a: { id: 'a', lat: 32.001, lng: 34.78 }, B: { lat: 32.002, lng: 34.78 } });
+const smp = M.samples(rl, 10);
+assert.equal(smp[0].leg, 0);
+assert.ok(Math.abs(smp[0].d - rl[0].dist) < 1e-6);
+assert.equal(smp.at(-1).d, 0);
+assert.ok(smp.every((x, i) => i === 0 || x.leg > smp[i - 1].leg || x.d < smp[i - 1].d), 'd decreases within a leg');
+
 console.log('model tests passed');
