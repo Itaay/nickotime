@@ -104,6 +104,9 @@ const sp = St.shortest([g], { lat: 32, lng: 34.78 }, { lat: 32, lng: 34.781 });
 assert.equal(sp.length, 6);
 assert.deepEqual(sp[2], [32.001, 34.78]);
 assert.equal(St.shortest([g], { lat: 33, lng: 35 }, { lat: 32, lng: 34.781 }), null, 'too far from any street');
+// a cut-off lane closer to the target than the network: snap past it to the network
+const g2 = { n: { ...g.n, 8: [32.00001, 34.78101], 9: [32.00002, 34.78102] }, w: [...g.w, [8, 9]] };
+assert.equal(St.shortest([g2], { lat: 32, lng: 34.78 }, { lat: 32.00001, lng: 34.78101 }).length, 6);
 assert.deepEqual(St.compact({ elements: [{ type: 'node', id: 5, lat: 32.1234567, lon: 34.7 }, { type: 'way', nodes: [5] }, { type: 'x' }] }), { n: { 5: [32.123457, 34.7] }, w: [[5]] });
 assert.deepEqual(St.cellsFor({ lat: 32.0855, lng: 34.7805 }, { lat: 32.0856, lng: 34.7806 }, 0), ['3208_3478']);
 

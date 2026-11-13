@@ -180,7 +180,13 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent); ou
 
 /* ---------- map ---------- */
 #mapwrap { display: none; position: fixed; inset: calc(var(--top) + env(safe-area-inset-top)) 0 calc(var(--tabs) + env(safe-area-inset-bottom)) 0; }
-body[data-view="map"] #mapwrap { display: block; }
+body[data-view="map"] #mapwrap, body[data-view="route"] #mapwrap { display: block; }
+body[data-view="route"] main { inset: auto 0 calc(var(--tabs) + env(safe-area-inset-bottom)) 0; max-height: 48vh; z-index: 15; background: var(--card);
+  border-radius: 20px 20px 0 0; box-shadow: 0 -6px 24px rgb(0 0 0 / .15); padding: 10px 16px 14px; }
+body[data-view="route"] .fabs { display: none; }
+.rname { flex: 1; min-width: 0; font: inherit; font-size: 19px; font-weight: 800; color: var(--ink); background: transparent; border: 0; border-bottom: 1px dashed var(--line); padding: 6px 0; margin-inline-end: 10px; }
+.ends { font-size: 15px; }
+.lightmk.off, .pinmk.off { opacity: .5; filter: grayscale(1); }
 body[data-view="map"] main { display: none; }
 #map { position: absolute; inset: 0; background: var(--line); }
 .cross { position: absolute; left: 50%; top: 50%; width: 30px; height: 30px; margin: -15px 0 0 -15px; pointer-events: none; z-index: 500; opacity: .5; }
@@ -193,7 +199,8 @@ body[data-view="map"] main { display: none; }
 #pickbar .grid2 { margin: 0; }
 .picking #pickbar { display: block; }
 .picking .fabs { display: none; }
-.drawing .cross { display: none; }
+.drawing .cross, body[data-view="route"] .cross { display: none; }
+.links { display: flex; gap: 18px; flex-wrap: wrap; } .link.danger { color: var(--red); }
 .drawing .leaflet-marker-icon { pointer-events: none !important; }
 .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
 .fabs { position: absolute; inset-inline-end: 14px; bottom: 18px; z-index: 600; display: grid; gap: 12px; }

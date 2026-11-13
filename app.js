@@ -88,8 +88,6 @@ const ICON = {
   pin: '<svg class="i" viewBox="0 0 24 24"><path d="M12 22s7-6.3 7-12a7 7 0 0 0-14 0c0 5.7 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/></svg>',
   walk: '<svg class="i" viewBox="0 0 24 24"><circle cx="13" cy="4" r="2"/><path d="m9 21 2.5-6.5L14 17v4M7 12l2.5-4 4 .5 2.5 3.5 2 1M11.5 14.5 13 8.5"/></svg>',
   bike: '<svg class="i" viewBox="0 0 24 24"><circle cx="5.5" cy="16.5" r="3.5"/><circle cx="18.5" cy="16.5" r="3.5"/><path d="M5.5 16.5 9 9h6l3.5 7.5M9 9 12 16.5h-6.5M14 5h2.5l-1.5 4"/></svg>',
-  up: '<svg class="i" viewBox="0 0 24 24"><path d="m6 15 6-6 6 6"/></svg>',
-  down: '<svg class="i" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>',
   x: '<svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>',
   camera: '<svg class="i" viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>',
 };
@@ -159,6 +157,8 @@ function render() {
   document.body.dataset.view = cur.name;
   document.querySelectorAll('#tabs a').forEach(a => a.classList.toggle('on', a.dataset.tab === (v.tab || cur.name)));
   stopRunMap();
+  if (cur.name !== 'route' && cur.name !== 'map') routeFit = null;
+  $('#mapwrap').style.bottom = '';
   main.innerHTML = v.html ? v.html(cur.id) : '';
   main.scrollTop = 0;
   v.mount?.(cur.id);
@@ -562,21 +562,33 @@ function ensureMap() {
   addTiles(map);
   markerLayer = L.layerGroup().addTo(map);
   map.on('moveend', () => { const c = map.getCenter(); state.ui.view = { lat: c.lat, lng: c.lng, z: map.getZoom() }; save(); });
-  map.on('click', e => { if (draw) { draw.pts.push([+e.latlng.lat.toFixed(6), +e.latlng.lng.toFixed(6)]); drawPreview(); } });
+  map.on('click', e => {
+    if (draw) { draw.pts.push([+e.latlng.lat.toFixed(6), +e.latlng.lng.toFixed(6)]); drawPreview(); } else if (cur.name === 'route') routeTap(e.latlng);
+  });
 }
-function drawMarkers() {
+function drawMarkers(edit) { // edit: the route being edited (taps edit it instead of opening things)
   markerLayer.clearLayers();
   const by = byId();
-  for (const r of state.routes) {
+  if (edit) for (const l of M.routeLegs(edit, by) || []) {
+    const solid = l.src === 'osm' || l.src === 'drawn';
+    L.polyline(l.pts, { color: '#2f6bff', weight: 6, opacity: 0.9, dashArray: solid ? null : '6 9', interactive: false }).addTo(markerLayer);
+    L.polyline(l.pts, { opacity: 0, weight: 26, bubblingMouseEvents: false }).on('click', () => acts.legmenu(edit.id, l.key)).addTo(markerLayer); // fat touch target
+  } else for (const r of state.routes) {
     const legs = M.routeLegs(r, by);
     if (legs) L.polyline(legs.flatMap((l, i) => i ? l.pts.slice(1) : l.pts), { color: '#2f6bff', weight: 4, opacity: 0.35, interactive: false }).addTo(markerLayer);
   }
-  for (const p of state.places) L.marker([p.lat, p.lng], {
-    icon: L.divIcon({ className: '', html: `<div class="pinmk">${ICON.pin}<span>${esc(p.name)}</span></div>`, iconSize: [0, 0] }),
-  }).on('click', () => nav('#/place/' + p.id)).addTo(markerLayer);
-  for (const l of state.lights) L.marker([l.lat, l.lng], {
-    icon: L.divIcon({ className: '', html: `<div class="lightmk">${ring(l.id, 'sm')}<span>${esc(l.name)}</span></div>`, iconSize: [0, 0] }),
-  }).on('click', () => nav('#/light/' + l.id)).addTo(markerLayer);
+  for (const p of state.places) {
+    const end = edit && (p.id === edit.from ? 'A' : p.id === edit.to ? 'B' : '');
+    L.marker([p.lat, p.lng], {
+      icon: L.divIcon({ className: '', html: `<div class="pinmk ${edit && !end ? 'off' : ''}">${ICON.pin}<span>${end ? end + ' · ' : ''}${esc(p.name)}</span></div>`, iconSize: [0, 0] }),
+    }).on('click', () => edit ? acts.placemenu(edit.id, p.id) : nav('#/place/' + p.id)).addTo(markerLayer);
+  }
+  for (const l of state.lights) {
+    const n = edit ? edit.via.indexOf(l.id) + 1 : 0;
+    L.marker([l.lat, l.lng], {
+      icon: L.divIcon({ className: '', html: `<div class="lightmk ${edit && !n ? 'off' : ''}">${ring(l.id, 'sm')}<span>${n ? n + ' · ' : ''}${esc(l.name)}</span></div>`, iconSize: [0, 0] }),
+    }).on('click', () => edit ? acts.togglevia(edit.id, l.id) : nav('#/light/' + l.id)).addTo(markerLayer);
+  }
 }
 let pick = null; // {kind, id}
 let draw = null, drawLayer = null; // {route, key, pts: taps between the leg's ends}
@@ -881,47 +893,89 @@ acts.delplace = async id => {
   nav('#/lights');
 };
 
-// ================= ROUTE EDITOR =================
+// ================= ROUTE EDITOR (on the map) =================
+// Tap a light: on/off the route. Tap a place: start/end. Tap the line: draw a shortcut. Tap empty map: new light/place.
+let routeFit = null;
 views.route = {
   tab: 'go',
   html(id) {
     const r = routeOf(id);
     if (!r) return `<p>${T('notFound')}</p>`;
-    const by = byId(), from = place(r.from), to = place(r.to);
-    const detour = l => from && to ? M.haversine(from, l) + M.haversine(l, to) - M.haversine(from, to) : 0;
-    const others = state.lights.filter(l => !r.via.includes(l.id)).sort((a, b) => detour(a) - detour(b));
-    const legs = M.routeLegs(r, by);
-    const total = legs ? legs.reduce((s, x) => s + x.dist, 0) : 0;
-    const placeSel = (field) => `<select data-change="routeplace:${r.id}:${field}">${state.places.map(p => `<option value="${p.id}" ${r[field] === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>`;
+    const legs = M.routeLegs(r, byId()), total = legs ? legs.reduce((s, x) => s + x.dist, 0) : 0;
+    const straight = legs?.some(l => l.src !== 'osm' && l.src !== 'drawn');
     return `
-      <div class="row-between"><h1>${T('route')}</h1><button class="btn primary" data-act="nav:go">${T('done')}</button></div>
-      <label class="field"><span>${T('name')}</span><input data-bind="route:${r.id}:name" value="${esc(r.name)}" maxlength="60" placeholder="${T('routePh')}"></label>
-      ${state.places.length < 2 ? `<p class="card muted">${T('needPlaces')}</p>` : `
-      <div class="grid2"><label class="field"><span>${T('from')}</span>${placeSel('from')}</label><label class="field"><span>${T('to')}</span>${placeSel('to')}</label></div>`}
-      <div class="field"><span>${T('lightsInOrder')}</span>
-        <ol class="list plain order">${r.via.map((v, i) => `<li><b class="num">${i + 1}</b><div class="grow">${esc(by[v]?.name)}</div>
-          <button class="icon" aria-label="${T('up')}" data-act="mv:${r.id}:${i}:-1" ${i ? '' : 'disabled'}>${ICON.up}</button>
-          <button class="icon" aria-label="${T('down')}" data-act="mv:${r.id}:${i}:1" ${i < r.via.length - 1 ? '' : 'disabled'}>${ICON.down}</button>
-          <button class="icon" aria-label="${T('remove')}" data-act="rmvia:${r.id}:${i}">${ICON.x}</button></li>`).join('') || `<p class="muted small">${T('noVia')}</p>`}</ol>
-        ${legs ? `<p class="muted small">${T('routeLen', meters(total), Math.round(total / speedOpts().normal / 60))}</p>` : ''}</div>
-      ${legs ? `<div class="field"><span>${T('pathTitle')}</span>
-        <ul class="list plain">${legs.map(l => `<li><div class="grow">${esc(l.from.name)} → ${esc(l.to.name)}
-          <div class="muted small">${T(l.src === 'drawn' ? 'path_drawn' : l.src === 'osm' ? 'path_osm' : pathBusy && !l.src ? 'path_busy' : 'path_none')} · ${meters(l.dist)}</div></div>
-          ${l.src === 'drawn' ? `<button class="icon" aria-label="${T('undraw')}" data-act="undraw:${r.id}:${l.key}">${ICON.x}</button>` : ''}
-          <button class="btn" data-act="draw:${r.id}:${l.key}">${T('draw')}</button></li>`).join('')}</ul>
-        <p class="muted small">${T('pathHelp')}</p>
-        <button class="link small" data-act="refreshstreets:${r.id}">${T('refreshStreets')}</button></div>` : ''}
-      ${others.length ? `<div class="field"><span>${T('addLights')}</span><ul class="list plain">${others.map(l => `
-        <li data-act="addvia:${r.id}:${l.id}">${ring(l.id, 'sm')}<div class="grow">${esc(l.name)}</div><span class="addbtn">${ICON.plus}</span></li>`).join('')}</ul></div>` : ''}
-      <div class="grid2"><button class="btn" data-act="reverse:${r.id}">${T('reverseCopy')}</button><button class="btn danger" data-act="delroute:${r.id}">${T('deleteRoute')}</button></div>`;
+      <div class="row-between"><input class="rname" data-bind="route:${r.id}:name" value="${esc(r.name)}" maxlength="60" placeholder="${T('routePh')}" aria-label="${T('name')}">
+        <button class="btn primary" data-act="nav:go">${T('done')}</button></div>
+      <p class="ends"><b>${esc(place(r.from)?.name || '?')}</b> → <b>${esc(place(r.to)?.name || '?')}</b> · ${T('nLights', r.via.length)}${legs ? ` · ${T('routeLen', meters(total), Math.round(total / speedOpts().normal / 60))}` : ''}</p>
+      ${pathBusy ? `<p class="muted small">${T('path_busy')}</p>` : straight ? `<p class="muted small">${T('straightNote')}</p>` : ''}
+      <p class="muted small">${T(state.places.length < 2 ? 'routeHintPlaces' : 'routeHint')}</p>
+      <div class="links small"><button class="link" data-act="reverse:${r.id}">${T('reverseCopy')}</button><button class="link" data-act="refreshstreets:${r.id}">${T('refreshShort')}</button><button class="link danger" data-act="delroute:${r.id}">${T('delete')}</button></div>`;
   },
-  mount(id) { const r = routeOf(id); if (r) ensurePaths(r); },
+  mount(id) {
+    const r = routeOf(id);
+    if (!r) return;
+    ensureMap();
+    $('#mapwrap').style.bottom = Math.max(0, innerHeight - main.getBoundingClientRect().top - 20) + 'px'; // map ends at the panel
+    map.invalidateSize();
+    drawMarkers(r);
+    ensurePaths(r);
+    if (routeFit === id) return; // keep the user's view while editing
+    routeFit = id;
+    const by = byId(), pts = [by[r.from], ...r.via.map(v => by[v]), by[r.to]].filter(Boolean).map(p => [p.lat, p.lng]);
+    if (pts.length > 1) map.fitBounds(pts, { padding: [50, 50], maxZoom: 17 });
+    else if (pts.length) map.setView(pts[0], 16);
+  },
 };
+acts.togglevia = (rid, lid) => {
+  const r = routeOf(rid), i = r.via.indexOf(lid);
+  if (i < 0) return acts.addvia(rid, lid);
+  r.via.splice(i, 1);
+  commit();
+  render();
+  toast(T('viaRemoved', light(lid).name));
+};
+acts.placemenu = async (rid, pid) => {
+  const r = routeOf(rid), k = await sheet(place(pid).name, [{ label: T('setStart'), value: 'from', cls: r.from === pid ? 'primary' : '' }, { label: T('setEnd'), value: 'to', cls: r.to === pid ? 'primary' : '' }]);
+  if (!k) return;
+  const other = k === 'from' ? 'to' : 'from';
+  if (r[other] === pid) r[other] = r[k]; // picking the other end swaps them
+  r[k] = pid;
+  commit();
+  render();
+};
+acts.legmenu = async (rid, key) => {
+  const r = routeOf(rid), [a, b] = key.split('>').map(k => byId()[k]?.name);
+  const k = await sheet(`${a} → ${b}`, [{ label: T('drawShortcut'), value: 'draw', cls: 'primary' },
+    ...(r.paths?.[key]?.src === 'drawn' ? [{ label: T('undraw'), value: 'undraw' }] : [])]);
+  if (k === 'draw') acts.draw(rid, key); else if (k === 'undraw') acts.undraw(rid, key);
+};
+async function routeTap(ll) {
+  const r = routeOf(cur.id);
+  if (!r) return;
+  // a near miss on a light or place means it, not "add a new one here"
+  const px = o => map.latLngToContainerPoint([o.lat, o.lng]).distanceTo(map.latLngToContainerPoint(ll));
+  const nearL = state.lights.find(l => px(l) < 30), nearP = state.places.find(p => px(p) < 30);
+  if (nearL) return acts.togglevia(r.id, nearL.id);
+  if (nearP) return acts.placemenu(r.id, nearP.id);
+  const k = await sheet(T('addHere'), [{ label: T('addLightRoute'), value: 'light', cls: 'primary' }, { label: T('addPlaceHere'), value: 'place' }]);
+  if (k === 'light') {
+    const l = { id: uid(), name: T('lightN', state.lights.length + 1), lat: ll.lat, lng: ll.lng, kind: 'fixed', notes: '', photos: [], events: [] };
+    state.lights.push(l);
+    acts.addvia(r.id, l.id);
+  } else if (k === 'place') {
+    const p = { id: uid(), name: state.places.length ? T('placeN', state.places.length + 1) : T('home'), lat: ll.lat, lng: ll.lng };
+    state.places.push(p);
+    if (!place(r.from)) r.from = p.id; else if (!place(r.to) || r.to === r.from) r.to = p.id;
+    commit();
+    render();
+    acts.placemenu(r.id, p.id);
+  }
+}
 
 // Street paths: each ~1 km cell of OSM streets is downloaded once and kept; streets rarely change.
 const OVERPASS = 'https://overpass-api.de/api/interpreter', CELL_MAX_AGE = 180 * 864e5;
 const MAX_CELLS = 12;      // a longer leg asks for too much of the map: keep it straight, the user can draw it
-const RETRY_NONE = 7 * 864e5;
+const RETRY_NONE = 7 * 864e5, ROUTER_V = 3; // bump ROUTER_V when routing improves: legs it failed on get retried
 let pathBusy = false;
 async function streetCell(k, fresh) {
   if (!fresh) { const c = await S.get('kv', 'osm:' + k); if (c && now() - c.t < CELL_MAX_AGE) return c; }
@@ -942,7 +996,7 @@ async function ensurePaths(r, fresh = false) {
   // drawn paths are kept even when their leg is gone (reordering lights would otherwise lose them)
   for (const k of Object.keys(r.paths)) if (r.paths[k].src !== 'drawn' && !legs.some(l => l.key === k)) delete r.paths[k];
   const todo = legs.filter(l => fresh ? l.src !== 'drawn'
-    : !l.src || (l.src === 'none' && now() - (r.paths[l.key].t || 0) > RETRY_NONE));
+    : !l.src || (l.src === 'none' && (r.paths[l.key].v !== ROUTER_V || now() - (r.paths[l.key].t || 0) > RETRY_NONE)));
   const tooBig = l => Streets.cellsFor(l.from, l.to).length > MAX_CELLS;
   if (!todo.length) return;
   pathBusy = true;
@@ -953,7 +1007,7 @@ async function ensurePaths(r, fresh = false) {
     await Promise.all(keys.slice(i, i + 2).map(k => streetCell(k, fresh).then(c => got.set(k, c), e => console.error(e))));
   let fail = 0;
   for (const l of todo) {
-    const none = () => { fail++; r.paths[l.key] = { src: 'none', t: now() }; };
+    const none = () => { fail++; r.paths[l.key] = { src: 'none', t: now(), v: ROUTER_V }; };
     if (tooBig(l)) { none(); continue; }
     try {
       const cells = Streets.cellsFor(l.from, l.to).map(k => got.get(k));
@@ -964,13 +1018,9 @@ async function ensurePaths(r, fresh = false) {
   }
   pathBusy = false;
   commit();
-  if (cur.name === 'route') toast(fail ? T('streetsSome') : T('streetsOk'));
   if (cur.name === 'route' && cur.id === r.id) render();
 }
 acts.refreshstreets = id => ensurePaths(routeOf(id), true);
-acts.routeplace = (id, field, el) => { routeOf(id)[field] = el.value; commit(); render(); };
-acts.mv = (id, i, d) => { const v = routeOf(id).via; i = +i; [v[i], v[i + +d]] = [v[i + +d], v[i]]; commit(); render(); };
-acts.rmvia = (id, i) => { routeOf(id).via.splice(+i, 1); commit(); render(); };
 acts.addvia = (id, lid) => {
   // cheapest insertion: put the light where it lengthens the path least
   const r = routeOf(id), by = byId(), l = light(lid);
@@ -981,13 +1031,14 @@ acts.addvia = (id, lid) => {
     const c = M.haversine(pts[i], l) + M.haversine(l, pts[i + 1]) - M.haversine(pts[i], pts[i + 1]);
     if (c < bestCost) { bestCost = c; best = i; }
   }
-  r.via.splice(best, 0, lid);
+  r.via.splice(best, 0, lid); // shortcut: cheapest insertion guesses the order; fails for loops back on itself, add manual reorder if that happens
   commit();
   render();
+  toast(T('viaAdded', l.name));
 };
 acts.reverse = id => {
   const r = routeOf(id), n = { id: uid(), name: `${r.name} ↩`, from: r.to, to: r.from, via: [...r.via].reverse(),
-    paths: Object.fromEntries(Object.entries(r.paths || {}).map(([k, v]) => [k.split('>').reverse().join('>'), { ...v, pts: [...v.pts].reverse() }])) };
+    paths: Object.fromEntries(Object.entries(r.paths || {}).filter(([, v]) => v.pts).map(([k, v]) => [k.split('>').reverse().join('>'), { ...v, pts: [...v.pts].reverse() }])) };
   state.routes.push(n);
   commit();
   nav('#/route/' + n.id);

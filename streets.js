@@ -29,7 +29,7 @@ export function compact(json) {
 }
 
 // Shortest walkable path a -> b over the merged cells; [[lat, lng], ...] from a to b, or null.
-export function shortest(cells, a, b, snapMax = 60) {
+export function shortest(cells, a, b, snapMax = 150) { // pins often sit mid-block, 60-100 m from a street node
   const pos = Object.assign({}, ...cells.map(c => c.n)), adj = new Map();
   const add = (u, v, d) => { if (!adj.has(u)) adj.set(u, []); adj.get(u).push([v, d]); };
   for (const c of cells) for (const way of c.w) for (let i = 1; i < way.length; i++) {
@@ -38,10 +38,21 @@ export function shortest(cells, a, b, snapMax = 60) {
     const d = hv(pos[u], pos[v]);
     add(u, v, d); add(v, u, d);
   }
+  // snap only to the main network: the nearest node is often on a cut-off piece (a private lane, a courtyard path)
+  const comp = new Map();
+  let main = -1, mainSize = 0;
+  for (const s0 of adj.keys()) {
+    if (comp.has(s0)) continue;
+    const id = comp.size, stack = [s0];
+    let size = 0;
+    comp.set(s0, id);
+    while (stack.length) { size++; for (const [v] of adj.get(stack.pop())) if (!comp.has(v)) { comp.set(v, id); stack.push(v); } }
+    if (size > mainSize) { mainSize = size; main = id; }
+  }
   // shortcut: snaps to the nearest street node, not the nearest point on a street; fine at junction lights
   const snap = p => {
     let best = null, bd = snapMax;
-    for (const id of adj.keys()) { const d = hv(pos[id], [p.lat, p.lng]); if (d < bd) { bd = d; best = id; } }
+    for (const id of adj.keys()) { if (comp.get(id) !== main) continue; const d = hv(pos[id], [p.lat, p.lng]); if (d < bd) { bd = d; best = id; } }
     return best;
   };
   const s = snap(a), t = snap(b);
