@@ -113,6 +113,7 @@ function sheet(title, options) {
       else if (e.target === d) d.close();
     });
     d.addEventListener('close', () => { d.remove(); res(null); });
+    document.querySelectorAll('dialog.sheet').forEach(x => x.remove()); // never stack sheets
     document.body.append(d);
     d.showModal();
   });
@@ -573,7 +574,7 @@ function drawMarkers(edit) { // edit: the route being edited (taps edit it inste
     const solid = l.src === 'osm' || l.src === 'drawn';
     L.polyline(l.pts, { color: '#2f6bff', weight: 6, opacity: 0.9, dashArray: solid ? null : '6 9', interactive: false }).addTo(markerLayer);
     L.polyline(l.pts, { opacity: 0, weight: 26, bubblingMouseEvents: false }).on('click', () => acts.legmenu(edit.id, l.key)).addTo(markerLayer); // fat touch target
-  } else for (const r of state.routes) {
+  } else if (!draw) for (const r of state.routes) { // while drawing, only the leg being drawn is shown
     const legs = M.routeLegs(r, by);
     if (legs) L.polyline(legs.flatMap((l, i) => i ? l.pts.slice(1) : l.pts), { color: '#2f6bff', weight: 4, opacity: 0.35, interactive: false }).addTo(markerLayer);
   }
@@ -597,7 +598,7 @@ function drawPreview() {
   const l = drawLeg();
   drawLayer.clearLayers();
   if (!l) return;
-  L.polyline(l.pts, { color: '#8a94a6', weight: 4, opacity: 0.5, dashArray: '4 8', interactive: false }).addTo(drawLayer);
+  L.polyline(l.pts, { color: '#2f6bff', weight: 5, opacity: 0.4, dashArray: '6 8', interactive: false }).addTo(drawLayer);
   const line = [l.pts[0], ...draw.pts, l.pts.at(-1)];
   L.polyline(line, { color: '#2f6bff', weight: 6, interactive: false }).addTo(drawLayer);
   for (const p of line) L.circleMarker(p, { radius: 5, color: '#fff', weight: 2, fillColor: '#2f6bff', fillOpacity: 1, interactive: false }).addTo(drawLayer);
@@ -667,7 +668,7 @@ acts.pickcancel = () => { const p = pick; pick = null; $('#mapwrap').classList.r
 acts.pickon = (kind, id) => { pick = { kind, id }; nav('#/map'); };
 acts.draw = (rid, key) => {
   const l = M.routeLegs(routeOf(rid), byId())?.find(x => x.key === key);
-  draw = { route: rid, key, pts: l?.src === 'drawn' ? l.pts.slice(1, -1) : [] };
+  draw = { route: rid, key, pts: [] }; // always a fresh drawing; the current path shows dashed underneath
   nav('#/map');
 };
 acts.drawundo = () => { draw?.pts.pop(); drawPreview(); };
@@ -975,7 +976,7 @@ async function routeTap(ll) {
 // Street paths: each ~1 km cell of OSM streets is downloaded once and kept; streets rarely change.
 const OVERPASS = 'https://overpass-api.de/api/interpreter', CELL_MAX_AGE = 180 * 864e5;
 const MAX_CELLS = 12;      // a longer leg asks for too much of the map: keep it straight, the user can draw it
-const RETRY_NONE = 7 * 864e5, ROUTER_V = 3; // bump ROUTER_V when routing improves: legs it failed on get retried
+const RETRY_NONE = 7 * 864e5, ROUTER_V = 4; // bump ROUTER_V when routing improves: legs it failed on get retried
 let pathBusy = false;
 async function streetCell(k, fresh) {
   if (!fresh) { const c = await S.get('kv', 'osm:' + k); if (c && now() - c.t < CELL_MAX_AGE) return c; }
@@ -993,10 +994,13 @@ async function ensurePaths(r, fresh = false) {
   const legs = M.routeLegs(r, byId());
   if (pathBusy || !legs) return;
   r.paths ||= {};
-  // drawn paths are kept even when their leg is gone (reordering lights would otherwise lose them)
-  for (const k of Object.keys(r.paths)) if (r.paths[k].src !== 'drawn' && !legs.some(l => l.key === k)) delete r.paths[k];
-  const todo = legs.filter(l => fresh ? l.src !== 'drawn'
-    : !l.src || (l.src === 'none' && (r.paths[l.key].v !== ROUTER_V || now() - (r.paths[l.key].t || 0) > RETRY_NONE)));
+  // a part of the route that's gone takes its path (drawn too) with it: keeping it made old drawings come back
+  for (const k of Object.keys(r.paths)) if (!legs.some(l => l.key === k)) delete r.paths[k];
+  const todo = legs.filter(l => {
+    const p = r.paths[l.key];
+    if (p?.src === 'drawn') return false;
+    return fresh || !p || p.v !== ROUTER_V || (p.src === 'none' && now() - (p.t || 0) > RETRY_NONE);
+  });
   const tooBig = l => Streets.cellsFor(l.from, l.to).length > MAX_CELLS;
   if (!todo.length) return;
   pathBusy = true;
@@ -1013,7 +1017,7 @@ async function ensurePaths(r, fresh = false) {
       const cells = Streets.cellsFor(l.from, l.to).map(k => got.get(k));
       if (cells.some(c => !c)) throw new Error('street data missing');
       const pts = Streets.shortest(cells, l.from, l.to);
-      if (pts) r.paths[l.key] = { src: 'osm', pts }; else none();
+      if (pts) r.paths[l.key] = { src: 'osm', pts, v: ROUTER_V }; else none();
     } catch (e) { console.error(e); none(); }
   }
   pathBusy = false;

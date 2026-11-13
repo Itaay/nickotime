@@ -101,12 +101,19 @@ assert.ok(Math.abs(mid.lat - 32.001) < 1e-6 && Math.abs(mid.lng - 34.7805) < 1e-
 // street routing: 2x2 grid with the direct edge missing goes around
 const g = { n: { 1: [32, 34.78], 2: [32, 34.781], 3: [32.001, 34.78], 4: [32.001, 34.781] }, w: [[1, 3, 4, 2]] };
 const sp = St.shortest([g], { lat: 32, lng: 34.78 }, { lat: 32, lng: 34.781 });
-assert.equal(sp.length, 6);
-assert.deepEqual(sp[2], [32.001, 34.78]);
+assert.equal(sp.length, 4); // a, the two far corners, b
+assert.deepEqual(sp[1], [32.001, 34.78]);
 assert.equal(St.shortest([g], { lat: 33, lng: 35 }, { lat: 32, lng: 34.781 }), null, 'too far from any street');
 // a cut-off lane closer to the target than the network: snap past it to the network
 const g2 = { n: { ...g.n, 8: [32.00001, 34.78101], 9: [32.00002, 34.78102] }, w: [...g.w, [8, 9]] };
-assert.equal(St.shortest([g2], { lat: 32, lng: 34.78 }, { lat: 32.00001, lng: 34.78101 }).length, 6);
+assert.ok(!St.shortest([g2], { lat: 32, lng: 34.78 }, { lat: 32.00001, lng: 34.78101 }).slice(0, -1).some(p => p[1] > 34.781005), 'not via the cut-off lane');
+// pins beside a long street join it at the nearest point, not at a far corner: ~35 m out, 47 m along, 35 m back
+const long = { n: { 1: [32, 34.78], 2: [32, 34.79], 3: [32.003, 34.79] }, w: [[1, 2, 3]] };
+const side = St.shortest([long], { lat: 32.0003, lng: 34.785 }, { lat: 32.0003, lng: 34.7855 });
+assert.ok(side && M.pathLen(side) < 130, JSON.stringify(side));
+// a path 3x the straight line (map data missing a crossing) is refused
+const gap = { n: { 1: [32, 34.78], 2: [32.01, 34.78], 3: [32.01, 34.7802], 4: [32, 34.7802] }, w: [[1, 2, 3, 4]] };
+assert.equal(St.shortest([gap], { lat: 32, lng: 34.78 }, { lat: 32, lng: 34.7802 }), null);
 assert.deepEqual(St.compact({ elements: [{ type: 'node', id: 5, lat: 32.1234567, lon: 34.7 }, { type: 'way', nodes: [5] }, { type: 'x' }] }), { n: { 5: [32.123457, 34.7] }, w: [[5]] });
 assert.deepEqual(St.cellsFor({ lat: 32.0855, lng: 34.7805 }, { lat: 32.0856, lng: 34.7806 }, 0), ['3208_3478']);
 

@@ -29,14 +29,14 @@ export function compact(json) {
 }
 
 // Shortest walkable path a -> b over the merged cells; [[lat, lng], ...] from a to b, or null.
-export function shortest(cells, a, b, snapMax = 150) { // pins often sit mid-block, 60-100 m from a street node
-  const pos = Object.assign({}, ...cells.map(c => c.n)), adj = new Map();
+export function shortest(cells, a, b, snapMax = 150) {
+  const pos = Object.assign({}, ...cells.map(c => c.n)), adj = new Map(), edges = [];
   const add = (u, v, d) => { if (!adj.has(u)) adj.set(u, []); adj.get(u).push([v, d]); };
   for (const c of cells) for (const way of c.w) for (let i = 1; i < way.length; i++) {
     const u = way[i - 1], v = way[i];
     if (!pos[u] || !pos[v]) continue;
     const d = hv(pos[u], pos[v]);
-    add(u, v, d); add(v, u, d);
+    add(u, v, d); add(v, u, d); edges.push([u, v]);
   }
   // snap only to the main network: the nearest node is often on a cut-off piece (a private lane, a courtyard path)
   const comp = new Map();
@@ -49,14 +49,25 @@ export function shortest(cells, a, b, snapMax = 150) { // pins often sit mid-blo
     while (stack.length) { size++; for (const [v] of adj.get(stack.pop())) if (!comp.has(v)) { comp.set(v, id); stack.push(v); } }
     if (size > mainSize) { mainSize = size; main = id; }
   }
-  // shortcut: snaps to the nearest street node, not the nearest point on a street; fine at junction lights
-  const snap = p => {
+  // join a and b to the nearest point ON a street (not the nearest corner, which can be on another street)
+  const k = Math.cos(a.lat * Math.PI / 180);
+  const near = p => {
     let best = null, bd = snapMax;
-    for (const id of adj.keys()) { if (comp.get(id) !== main) continue; const d = hv(pos[id], [p.lat, p.lng]); if (d < bd) { bd = d; best = id; } }
+    for (const [u, v] of edges) {
+      if (comp.get(u) !== main) continue;
+      const A = pos[u], B = pos[v], ax = (A[1] - p.lng) * k, ay = A[0] - p.lat, dx = (B[1] - A[1]) * k, dy = B[0] - A[0], L2 = dx * dx + dy * dy;
+      const f = L2 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / L2)) : 0;
+      const q = [A[0] + (B[0] - A[0]) * f, A[1] + (B[1] - A[1]) * f], d = hv(q, [p.lat, p.lng]);
+      if (d < bd) { bd = d; best = { u, v, q }; }
+    }
     return best;
   };
-  const s = snap(a), t = snap(b);
-  if (s == null || t == null) return null;
+  const S = near(a), E = near(b);
+  if (!S || !E) return null;
+  const s = 's', t = 't';
+  pos.s = S.q; pos.t = E.q;
+  for (const [id, x] of [[s, S], [t, E]]) for (const n of [x.u, x.v]) { const d = hv(x.q, pos[n]); add(id, n, d); add(n, id, d); }
+  if ((S.u === E.u && S.v === E.v) || (S.u === E.v && S.v === E.u)) { const d = hv(S.q, E.q); add(s, t, d); add(t, s, d); } // same street segment
   const dist = new Map([[s, 0]]), prev = new Map(), heap = [[0, s]];
   const push = x => { heap.push(x); let i = heap.length - 1; while (i) { const p = (i - 1) >> 1; if (heap[p][0] <= heap[i][0]) break; [heap[p], heap[i]] = [heap[i], heap[p]]; i = p; } };
   const pop = () => {
@@ -86,5 +97,9 @@ export function shortest(cells, a, b, snapMax = 150) { // pins often sit mid-blo
   if (!dist.has(t)) return null;
   const ids = [t];
   while (ids[0] !== s) ids.unshift(prev.get(ids[0]));
-  return [[a.lat, a.lng], ...ids.map(id => pos[id]), [b.lat, b.lng]];
+  const out = [[a.lat, a.lng], ...ids.map(id => pos[id]), [b.lat, b.lng]].filter((p, i, x) => !i || hv(p, x[i - 1]) > 0.5);
+  // a path 3x the straight line is almost always bad map data (a missing crossing): leave it straight, the user can draw it
+  let len = 0;
+  for (let i = 1; i < out.length; i++) len += hv(out[i - 1], out[i]);
+  return len > 3 * hv(out[0], out.at(-1)) + 300 ? null : out;
 }
