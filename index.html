@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<!-- Nothing may be sent anywhere except map tile requests to OpenStreetMap. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob: https://tile.openstreetmap.org; connect-src 'self' https://tile.openstreetmap.org; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<!-- Nothing may be sent anywhere except map requests to OpenStreetMap (tiles, and street data for an area). -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob: https://tile.openstreetmap.org; connect-src 'self' https://tile.openstreetmap.org https://overpass-api.de; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>Nickotime</title>
 <meta name="description" content="Pace your walk or ride to catch green lights. Works offline, data stays on your phone.">
 <meta name="theme-color" content="#0e1726">

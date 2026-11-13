@@ -1,5 +1,6 @@
 import * as M from './model.js';
 import * as S from './store.js';
+import * as Streets from './streets.js';
 import { T, setLang, getLang } from './i18n.js';
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -282,6 +283,7 @@ views.go = {
       ${rs.length < 2 ? `<p class="muted small">${T('altHint')}</p>` : ''}
       <button class="btn ghost wide" data-act="newroute">${ICON.plus} ${T('newRoute')}</button>`;
   },
+  async mount() { for (const r of [...state.routes]) await ensurePaths(r); },
   tick() {
     const pair = curPair(), eta = $('#p-eta');
     if (!pair || !eta) return;
@@ -453,8 +455,8 @@ views.run = {
     }
 
     // 3. me
-    const f = leg.dist ? 1 - run.d / leg.dist : 1;
-    youDot.setLatLng([leg.from.lat + (leg.to.lat - leg.from.lat) * f, leg.from.lng + (leg.to.lng - leg.from.lng) * f]);
+    const me = M.along(leg.pts, leg.dist ? 1 - run.d / leg.dist : 1);
+    youDot.setLatLng([me.lat, me.lng]);
     youDot.setStyle(good && n ? { fillColor: '#2f6bff', color: '#fff' } : { fillColor: '#fff', color: '#2f6bff' });
     youDot.bringToFront();
 
@@ -547,13 +549,14 @@ function ensureMap() {
   addTiles(map);
   markerLayer = L.layerGroup().addTo(map);
   map.on('moveend', () => { const c = map.getCenter(); state.ui.view = { lat: c.lat, lng: c.lng, z: map.getZoom() }; save(); });
+  map.on('click', e => { if (draw) { draw.pts.push([+e.latlng.lat.toFixed(6), +e.latlng.lng.toFixed(6)]); drawPreview(); } });
 }
 function drawMarkers() {
   markerLayer.clearLayers();
   const by = byId();
   for (const r of state.routes) {
-    const pts = [r.from, ...r.via, r.to].map(id => by[id]).filter(p => p?.lat != null);
-    if (pts.length > 1) L.polyline(pts.map(p => [p.lat, p.lng]), { color: '#2f6bff', weight: 4, opacity: 0.35, interactive: false }).addTo(markerLayer);
+    const legs = M.routeLegs(r, by);
+    if (legs) L.polyline(legs.flatMap((l, i) => i ? l.pts.slice(1) : l.pts), { color: '#2f6bff', weight: 4, opacity: 0.35, interactive: false }).addTo(markerLayer);
   }
   for (const p of state.places) L.marker([p.lat, p.lng], {
     icon: L.divIcon({ className: '', html: `<div class="pinmk">${ICON.pin}<span>${esc(p.name)}</span></div>`, iconSize: [0, 0] }),
@@ -563,13 +566,35 @@ function drawMarkers() {
   }).on('click', () => nav('#/light/' + l.id)).addTo(markerLayer);
 }
 let pick = null; // {kind, id}
+let draw = null, drawLayer = null; // {route, key, pts: taps between the leg's ends}
+function drawLeg() { return M.routeLegs(routeOf(draw.route), byId())?.find(l => l.key === draw.key); }
+function drawPreview() {
+  const l = drawLeg();
+  drawLayer.clearLayers();
+  if (!l) return;
+  L.polyline(l.pts, { color: '#8a94a6', weight: 4, opacity: 0.5, dashArray: '4 8', interactive: false }).addTo(drawLayer);
+  const line = [l.pts[0], ...draw.pts, l.pts.at(-1)];
+  L.polyline(line, { color: '#2f6bff', weight: 6, interactive: false }).addTo(drawLayer);
+  for (const p of line) L.circleMarker(p, { radius: 5, color: '#fff', weight: 2, fillColor: '#2f6bff', fillOpacity: 1, interactive: false }).addTo(drawLayer);
+}
 views.map = {
   mount() {
     ensureMap();
     setTimeout(() => map.invalidateSize(), 0);
     drawMarkers();
-    $('#mapwrap').classList.toggle('picking', !!pick);
-    if (pick) {
+    drawLayer ||= L.layerGroup().addTo(map);
+    drawLayer.clearLayers();
+    const dl = draw && drawLeg();
+    if (draw && !dl) draw = null;
+    $('#mapwrap').classList.toggle('picking', !!(pick || draw));
+    $('#mapwrap').classList.toggle('drawing', !!draw);
+    $('#pickbar').innerHTML = draw
+      ? `<p>${T('drawHint', esc(dl.from.name), esc(dl.to.name))}</p><div class="grid3"><button class="btn" data-act="drawcancel">${T('cancel')}</button><button class="btn" data-act="drawundo">${T('undoPt')}</button><button class="btn primary" data-act="drawsave">${T('save')}</button></div>`
+      : `<p>${T('pickHint')}</p><div class="grid2"><button class="btn" data-act="pickcancel">${T('cancel')}</button><button class="btn primary" data-act="pickset">${T('setHere')}</button></div>`;
+    if (draw) {
+      drawPreview();
+      setTimeout(() => map.fitBounds(dl.pts, { padding: [60, 60], maxZoom: 18 }), 0); // after invalidateSize
+    } else if (pick) {
       const o = pick.kind === 'light' ? light(pick.id) : place(pick.id);
       if (o?.lat != null) map.setView([o.lat, o.lng], Math.max(map.getZoom(), 17));
     }
@@ -615,6 +640,20 @@ acts.pickset = () => {
 };
 acts.pickcancel = () => { const p = pick; pick = null; $('#mapwrap').classList.remove('picking'); nav(p ? `#/${p.kind === 'light' ? 'edit' : 'place'}/${p.id}` : '#/map'); };
 acts.pickon = (kind, id) => { pick = { kind, id }; nav('#/map'); };
+acts.draw = (rid, key) => {
+  const l = M.routeLegs(routeOf(rid), byId())?.find(x => x.key === key);
+  draw = { route: rid, key, pts: l?.src === 'drawn' ? l.pts.slice(1, -1) : [] };
+  nav('#/map');
+};
+acts.drawundo = () => { draw?.pts.pop(); drawPreview(); };
+const endDraw = () => { const rid = draw?.route; draw = null; $('#mapwrap').classList.remove('picking', 'drawing'); nav(rid ? '#/route/' + rid : '#/map'); };
+acts.drawcancel = endDraw;
+acts.drawsave = () => {
+  const r = routeOf(draw.route), l = drawLeg();
+  if (r && l) { (r.paths ||= {})[draw.key] = { src: 'drawn', pts: [l.pts[0], ...draw.pts, l.pts.at(-1)] }; commit(); }
+  endDraw();
+};
+acts.undraw = (rid, key) => { delete routeOf(rid).paths?.[key]; commit(); render(); };
 acts.usegps = (kind, id) => {
   if (!gpsGood()) return toast(T('gpsBad'));
   const o = kind === 'light' ? light(id) : place(id);
@@ -852,11 +891,64 @@ views.route = {
           <button class="icon" aria-label="${T('down')}" data-act="mv:${r.id}:${i}:1" ${i < r.via.length - 1 ? '' : 'disabled'}>${ICON.down}</button>
           <button class="icon" aria-label="${T('remove')}" data-act="rmvia:${r.id}:${i}">${ICON.x}</button></li>`).join('') || `<p class="muted small">${T('noVia')}</p>`}</ol>
         ${legs ? `<p class="muted small">${T('routeLen', meters(total), dur(total / speedOpts().normal * 1000))}</p>` : ''}</div>
+      ${legs ? `<div class="field"><span>${T('pathTitle')}</span>
+        <ul class="list plain">${legs.map(l => `<li><div class="grow">${esc(l.from.name)} → ${esc(l.to.name)}
+          <div class="muted small">${T(l.src === 'drawn' ? 'path_drawn' : l.src === 'osm' ? 'path_osm' : pathBusy ? 'path_busy' : 'path_none')} · ${meters(l.dist)}</div></div>
+          ${l.src === 'drawn' ? `<button class="icon" aria-label="${T('undraw')}" data-act="undraw:${r.id}:${l.key}">${ICON.x}</button>` : ''}
+          <button class="btn" data-act="draw:${r.id}:${l.key}">${T('draw')}</button></li>`).join('')}</ul>
+        <p class="muted small">${T('pathHelp')}</p>
+        <button class="link small" data-act="refreshstreets:${r.id}">${T('refreshStreets')}</button></div>` : ''}
       ${others.length ? `<div class="field"><span>${T('addLights')}</span><ul class="list plain">${others.map(l => `
         <li data-act="addvia:${r.id}:${l.id}">${ring(l.id, 'sm')}<div class="grow">${esc(l.name)}</div><span class="addbtn">${ICON.plus}</span></li>`).join('')}</ul></div>` : ''}
       <div class="grid2"><button class="btn" data-act="reverse:${r.id}">${T('reverseCopy')}</button><button class="btn danger" data-act="delroute:${r.id}">${T('deleteRoute')}</button></div>`;
   },
+  mount(id) { const r = routeOf(id); if (r) ensurePaths(r); },
 };
+
+// Street paths: each ~1 km cell of OSM streets is downloaded once and kept; streets rarely change.
+const OVERPASS = 'https://overpass-api.de/api/interpreter', CELL_MAX_AGE = 180 * 864e5;
+let pathBusy = false;
+const pathFailed = new Set(); // legs with no street path this session; don't retry on every render
+async function streetCell(k, fresh) {
+  if (!fresh) { const c = await S.get('kv', 'osm:' + k); if (c && now() - c.t < CELL_MAX_AGE) return c; }
+  let res = await fetch(OVERPASS, { method: 'POST', body: new URLSearchParams({ data: Streets.overpassQuery(k) }) });
+  if (res.status === 429 || res.status >= 500) { // busy server: one retry
+    await new Promise(r => setTimeout(r, 8000));
+    res = await fetch(OVERPASS, { method: 'POST', body: new URLSearchParams({ data: Streets.overpassQuery(k) }) });
+  }
+  if (!res.ok) throw new Error('overpass ' + res.status);
+  const c = { t: now(), ...Streets.compact(await res.json()) };
+  await S.put('kv', 'osm:' + k, c);
+  return c;
+}
+async function ensurePaths(r, fresh = false) {
+  const legs = M.routeLegs(r, byId());
+  if (pathBusy || !legs) return;
+  r.paths ||= {};
+  for (const k of Object.keys(r.paths)) if (!legs.some(l => l.key === k)) delete r.paths[k];
+  const todo = legs.filter(l => fresh ? l.src !== 'drawn' : !l.src && !pathFailed.has(l.key));
+  if (!todo.length) return;
+  pathBusy = true;
+  if (cur.name === 'route') render();
+  // download every needed cell first, two at a time (Overpass allows 2 parallel requests per user)
+  const got = new Map(), keys = [...new Set(todo.flatMap(l => Streets.cellsFor(l.from, l.to)))];
+  for (let i = 0; i < keys.length; i += 2)
+    await Promise.all(keys.slice(i, i + 2).map(k => streetCell(k, fresh).then(c => got.set(k, c), e => console.error(e))));
+  let fail = 0;
+  for (const l of todo) {
+    try {
+      const cells = Streets.cellsFor(l.from, l.to).map(k => got.get(k));
+      if (cells.some(c => !c)) throw new Error('street data missing');
+      const pts = Streets.shortest(cells, l.from, l.to);
+      if (pts) { r.paths[l.key] = { src: 'osm', pts }; pathFailed.delete(l.key); } else { fail++; pathFailed.add(l.key); }
+    } catch (e) { console.error(e); fail++; pathFailed.add(l.key); }
+  }
+  pathBusy = false;
+  commit();
+  toast(fail ? T('streetsSome', fail) : T('streetsOk'));
+  if (cur.name === 'route' && cur.id === r.id) render();
+}
+acts.refreshstreets = id => { pathFailed.clear(); ensurePaths(routeOf(id), true); };
 acts.routeplace = (id, field, el) => { routeOf(id)[field] = el.value; commit(); render(); };
 acts.mv = (id, i, d) => { const v = routeOf(id).via; i = +i; [v[i], v[i + +d]] = [v[i + +d], v[i]]; commit(); render(); };
 acts.rmvia = (id, i) => { routeOf(id).via.splice(+i, 1); commit(); render(); };
@@ -875,7 +967,8 @@ acts.addvia = (id, lid) => {
   render();
 };
 acts.reverse = id => {
-  const r = routeOf(id), n = { id: uid(), name: `${r.name} ↩`, from: r.to, to: r.from, via: [...r.via].reverse() };
+  const r = routeOf(id), n = { id: uid(), name: `${r.name} ↩`, from: r.to, to: r.from, via: [...r.via].reverse(),
+    paths: Object.fromEntries(Object.entries(r.paths || {}).map(([k, v]) => [k.split('>').reverse().join('>'), { ...v, pts: [...v.pts].reverse() }])) };
   state.routes.push(n);
   commit();
   nav('#/route/' + n.id);
@@ -948,7 +1041,10 @@ function cleanImport(data) {
       events: arr(l.events).filter(e => num(e?.t) && ['G', 'R', 'P'].includes(e.e)).map(e => ({ t: e.t, e: e.e })),
     })),
     places: arr(s.places).filter(pt).map(p => ({ id: str(p.id), name: str(p.name, 60), lat: p.lat, lng: p.lng })),
-    routes: arr(s.routes).filter(r => str(r?.id)).map(r => ({ id: str(r.id), name: str(r.name, 60), from: str(r.from), to: str(r.to), via: arr(r.via).filter(v => typeof v === 'string').map(v => v.slice(0, 40)) })),
+    routes: arr(s.routes).filter(r => str(r?.id)).map(r => ({ id: str(r.id), name: str(r.name, 60), from: str(r.from), to: str(r.to), via: arr(r.via).filter(v => typeof v === 'string').map(v => v.slice(0, 40)),
+      paths: Object.fromEntries(Object.entries(r.paths && typeof r.paths === 'object' ? r.paths : {}).slice(0, 100)
+        .filter(([k, v]) => k.length <= 90 && ['osm', 'drawn'].includes(v?.src) && Array.isArray(v.pts) && v.pts.length >= 2 && v.pts.length <= 5000 && v.pts.every(p => Array.isArray(p) && num(p[0]) && num(p[1])))
+        .map(([k, v]) => [k, { src: v.src, pts: v.pts.map(p => [p[0], p[1]]) }])) })),
     photos: Object.fromEntries(Object.entries(data.photos && typeof data.photos === 'object' ? data.photos : {})
       .filter(([k, v]) => typeof v === 'string' && /^data:image\/(jpeg|png|webp);base64,/.test(v) && k.length <= 40)),
   };

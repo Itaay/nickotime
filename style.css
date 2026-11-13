@@ -193,6 +193,9 @@ body[data-view="map"] main { display: none; }
 #pickbar .grid2 { margin: 0; }
 .picking #pickbar { display: block; }
 .picking .fabs { display: none; }
+.drawing .cross { display: none; }
+.drawing .leaflet-marker-icon { pointer-events: none !important; }
+.grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
 .fabs { position: absolute; inset-inline-end: 14px; bottom: 18px; z-index: 600; display: grid; gap: 12px; }
 .fab { width: 54px; height: 54px; border-radius: 18px; border: 0; background: var(--card); color: var(--ink); box-shadow: 0 4px 18px rgb(0 0 0 / .18); display: grid; place-items: center; cursor: pointer; }
 .fab.primary { background: var(--accent); color: #fff; }

@@ -175,17 +175,39 @@ export function pace(d, rest, t, models, { normal, min, max, step, minLeft = 3 }
 export function routeLegs(route, byId) {
   const pts = [byId[route.from], ...route.via.map(id => byId[id]), byId[route.to]];
   if (pts.some(p => !p || p.lat == null)) return null;
-  return pts.slice(1).map((p, i) => ({ dist: haversine(pts[i], p) * DETOUR, light: i < route.via.length ? p.id : null, from: pts[i], to: p }));
+  return pts.slice(1).map((p, i) => {
+    const a = pts[i], key = `${a.id}>${p.id}`, path = route.paths?.[key]?.pts;
+    // stored interior points, current endpoints (a light may have been moved since)
+    const line = [[a.lat, a.lng], ...(path ? path.slice(1, -1) : []), [p.lat, p.lng]];
+    return { key, dist: path ? pathLen(line) : haversine(a, p) * DETOUR, light: i < route.via.length ? p.id : null, from: a, to: p, pts: line, src: route.paths?.[key]?.src || null };
+  });
 }
 
-// Points every ~step m along the drawn route; d = street distance left to the end of that leg.
+const hv = (a, b) => haversine({ lat: a[0], lng: a[1] }, { lat: b[0], lng: b[1] });
+export const pathLen = pts => pts.slice(1).reduce((s, p, i) => s + hv(pts[i], p), 0);
+
+// Point a fraction f (0..1) of the way along a [[lat, lng], ...] line.
+export function along(pts, f) {
+  let left = Math.max(0, Math.min(1, f)) * pathLen(pts);
+  for (let i = 1; i < pts.length; i++) {
+    const seg = hv(pts[i - 1], pts[i]);
+    if (left <= seg || i === pts.length - 1) {
+      const k = seg ? Math.min(1, left / seg) : 0;
+      return { lat: pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * k, lng: pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * k };
+    }
+    left -= seg;
+  }
+  return { lat: pts[0][0], lng: pts[0][1] };
+}
+
+// Points every ~step m along the route's path; d = street distance left to the end of that leg.
 export function samples(legs, step = 8) {
   const out = [];
   legs.forEach((L, i) => {
     const n = Math.max(1, Math.round(L.dist / step));
     for (let k = 0; k < n; k++) {
       const f = k / n;
-      out.push({ lat: L.from.lat + (L.to.lat - L.from.lat) * f, lng: L.from.lng + (L.to.lng - L.from.lng) * f, leg: i, d: L.dist * (1 - f) });
+      out.push({ ...along(L.pts, f), leg: i, d: L.dist * (1 - f) });
     }
   });
   const last = legs.at(-1);

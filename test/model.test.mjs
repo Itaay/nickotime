@@ -1,6 +1,7 @@
 // node test/model.test.mjs
 import assert from 'node:assert/strict';
 import * as M from '../model.js';
+import * as St from '../streets.js';
 
 const T0 = new Date('2026-11-10T08:00:00').getTime(); // Tuesday
 const C = 90, G = 22;
@@ -66,5 +67,22 @@ assert.equal(smp[0].leg, 0);
 assert.ok(Math.abs(smp[0].d - rl[0].dist) < 1e-6);
 assert.equal(smp.at(-1).d, 0);
 assert.ok(smp.every((x, i) => i === 0 || x.leg > smp[i - 1].leg || x.d < smp[i - 1].d), 'd decreases within a leg');
+
+// stored path: interior points kept, endpoints follow the places, length is the real path
+const by = { A: { id: 'A', lat: 32, lng: 34.78 }, B: { id: 'B', lat: 32, lng: 34.781 } };
+const bent = M.routeLegs({ from: 'A', via: [], to: 'B', paths: { 'A>B': { src: 'drawn', pts: [[0, 0], [32.001, 34.7805], [0, 0]] } } }, by)[0];
+assert.deepEqual(bent.pts[0], [32, 34.78]);
+assert.ok(bent.dist > M.haversine(by.A, by.B) * 2, 'bent path is longer');
+const mid = M.along(bent.pts, 0.5);
+assert.ok(Math.abs(mid.lat - 32.001) < 1e-6 && Math.abs(mid.lng - 34.7805) < 1e-6);
+
+// street routing: 2x2 grid with the direct edge missing goes around
+const g = { n: { 1: [32, 34.78], 2: [32, 34.781], 3: [32.001, 34.78], 4: [32.001, 34.781] }, w: [[1, 3, 4, 2]] };
+const sp = St.shortest([g], { lat: 32, lng: 34.78 }, { lat: 32, lng: 34.781 });
+assert.equal(sp.length, 6);
+assert.deepEqual(sp[2], [32.001, 34.78]);
+assert.equal(St.shortest([g], { lat: 33, lng: 35 }, { lat: 32, lng: 34.781 }), null, 'too far from any street');
+assert.deepEqual(St.compact({ elements: [{ type: 'node', id: 5, lat: 32.1234567, lon: 34.7 }, { type: 'way', nodes: [5] }, { type: 'x' }] }), { n: { 5: [32.123457, 34.7] }, w: [[5]] });
+assert.deepEqual(St.cellsFor({ lat: 32.0855, lng: 34.7805 }, { lat: 32.0856, lng: 34.7806 }, 0), ['3208_3478']);
 
 console.log('model tests passed');
