@@ -13,7 +13,9 @@ const DEFAULT = () => ({ v: 1, settings: { lang: null, mode: 'walk', walk: 5, bi
 let state, photos = {};
 
 // ---------- persistence ----------
+let readOnly = false; // set when loading failed: saving would replace the user's data with an empty state
 async function save() {
+  if (readOnly) return;
   try { await S.put('kv', 'state', state); } catch (e) { console.error(e); toast(T('saveFailed')); }
 }
 const mcache = new Map();
@@ -128,7 +130,7 @@ function updRing(el) {
   const st = M.stateAt(model(l), now());
   const c = st.known ? (st.green ? 'g' : 'r') : 'u';
   const frac = st.known ? Math.max(0, Math.min(1, st.left / st.total)) : 0;
-  const txt = st.known ? Math.ceil(st.left) : (l.kind === 'button' ? '⏻' : '?');
+  const txt = !st.known ? (l.kind === 'button' ? '⏻' : '?') : st.conf === 'low' ? '~' : (st.conf === 'med' ? '~' : '') + Math.ceil(st.left);
   el.dataset.s = c;
   el.dataset.conf = st.conf || '';
   el.innerHTML = `<svg viewBox="0 0 100 100"><circle class="trk" cx="50" cy="50" r="44"/>${st.known
@@ -160,6 +162,7 @@ function render() {
   main.innerHTML = v.html ? v.html(cur.id) : '';
   main.scrollTop = 0;
   v.mount?.(cur.id);
+  main.querySelectorAll('[data-act]:not(button):not(a)').forEach(e => { e.setAttribute('role', 'button'); e.tabIndex = 0; });
   (['map', 'lights', 'run', 'go', 'measure', 'edit', 'place'].includes(cur.name) ? gpsOn : gpsOff)();
   wakeLock(['run', 'measure'].includes(cur.name));
   tick();
@@ -177,13 +180,20 @@ document.addEventListener('click', e => {
   const [a, ...args] = el.dataset.act.split(':');
   acts[a]?.(...args, el);
 });
+document.addEventListener('keydown', e => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches?.('[data-act][role=button]')) { e.preventDefault(); e.target.click(); }
+});
 document.addEventListener('input', e => {
   const el = e.target.closest('[data-bind]');
   if (!el) return;
   const [kind, id, field] = el.dataset.bind.split(':');
   const obj = kind === 'settings' ? state.settings : (kind === 'light' ? light : kind === 'place' ? place : routeOf)(id);
   if (!obj) return;
-  if (el.type === 'number') { if (el.value === '' || !isFinite(+el.value)) return; obj[field] = +el.value; } else obj[field] = el.value;
+  if (el.type === 'number') {
+    const v = +el.value;
+    if (el.value === '' || !isFinite(v) || (el.min !== '' && v < +el.min) || (el.max !== '' && v > +el.max)) return;
+    obj[field] = v;
+  } else obj[field] = el.value;
   commit();
 });
 document.addEventListener('change', e => {
@@ -210,7 +220,7 @@ function addEvent(id, e, quiet) {
 acts.ev = (id, e) => addEvent(id, e);
 acts.undo = id => {
   const l = light(id);
-  if (!l?.events.length) return;
+  if (!l?.events.length || now() - l.events.at(-1).t > 5 * 60e3) return toast(T('nothingToUndo'));
   l.events.pop();
   commit();
   render();
@@ -268,8 +278,8 @@ views.go = {
         <div class="row-between"><h2>${T('whenToLeave')}</h2><span class="muted small">${T('next10')}</span></div>
         <div class="heat">${rs.map(r => `
           <div class="hrow"><div class="hname">${esc(r.name)}</div>
-          <div class="cells">${Array.from({ length: SLOTS }, (_, k) => `<i id="c-${r.id}-${k}" data-act="cell:${r.id}:${k}" class="${k % 4 === 0 ? 'm' : ''}"></i>`).join('')}</div></div>`).join('')}
-          <div class="axis">${[0, 2, 4, 6, 8].map(m => `<span>${m ? '+' + m : T('now')}</span>`).join('')}</div>
+          <div class="cells">${Array.from({ length: SLOTS }, (_, k) => `<i id="c-${r.id}-${k}" data-act="cell:${r.id}:${k}" aria-label="+${dur(k * SLOT)}" class="${k % 4 === 0 ? 'm' : ''}"></i>`).join('')}</div></div>`).join('')}
+          <div class="axis">${[0, 2, 4, 6, 8].map(m => `<span dir="ltr">${m ? '+' + m : T('now')}</span>`).join('')}</div>
         </div>
         <div class="legend"><span><i style="background:var(--heat0)"></i>${T('noWait')}</span><span><i style="background:var(--heat1)"></i>${T('longWait')}</span></div>
         <p id="p-sel" class="sel muted">${T('tapCell')}</p>
@@ -323,6 +333,7 @@ views.go = {
 acts.pair = k => { state.ui.pair = k; sel = null; save(); render(); };
 acts.cell = (r, k) => { sel = { r, k: +k }; tick(); };
 acts.newroute = () => {
+  if (state.places.length < 2) { toast(T('needPlaces')); return nav('#/map'); }
   const pair = curPair();
   const r = { id: uid(), name: T('routeN', state.routes.length + 1), from: pair?.[0] || state.places[0]?.id || null, to: pair?.[1] || state.places[1]?.id || null, via: [] };
   state.routes.push(r);
@@ -343,8 +354,8 @@ acts.start = key => {
 // Every point of every route to the destination is coloured by what happens at the next light if you
 // are there now and keep your usual pace. Green bands drift along at walking speed: ride one and you
 // arrive on green. A route that is slower from a point is faded there. No GPS needed: tap where you are.
-const BAND = { g: '#10a95f', w: '#f0a020', l: '#e5484d', u: '#8a94a6', e: '#2f6bff' };
-let runMap = null, geo = null, youDot = null, lastRec = null, lastSave = 0;
+const BAND = { g: '#12b76a', w: '#f0a020', l: '#a8231c', u: '#8a94a6', e: '#5b8def' }; // light green vs dark red: tells apart without colour vision too
+let runMap = null, geo = null, youDot = null, lastRec = null, lastSave = 0, lastRib = 0;
 
 const pairRoutes = pair => state.routes.filter(r => r.from === pair[0] && r.to === pair[1]);
 const curGeo = () => geo?.find(x => x.r.id === state.ui.run?.route) || geo?.[0];
@@ -379,7 +390,7 @@ views.run = {
     if (!state.ui.run?.pair) return `<p class="card">${T('noRun')}</p>`;
     return `<div class="runwrap">
       <div class="runmapbox"><div id="runmap"></div>
-        <div class="maplegend"><span><i style="background:${BAND.g}"></i>${T('bandG')}</span><span><i style="background:${BAND.l}"></i>${T('bandR')}</span><span><i class="faded"></i>${T('bandF')}</span></div></div>
+        <div class="maplegend">${[['g', 'bandG'], ['w', 'bandW'], ['l', 'bandR'], ['e', 'bandE']].map(([b, k]) => `<span><i style="background:${BAND[b]}"></i>${T(k)}</span>`).join('')}<span><i class="faded"></i>${T('bandF')}</span></div></div>
       <section class="panel">
         <div class="row-between"><div class="grow"><b id="g-route"></b><div class="muted small" id="g-next"></div></div>
           <div class="eta"><div class="muted small">${T('arrive')}</div><b id="g-eta">--:--</b></div></div>
@@ -399,11 +410,13 @@ views.run = {
     if (!run?.pair) return;
     geo = buildGeo(run.pair);
     if (!geo.length) return;
+    if (now() - run.t > 10 * 60e3) { run.t = now(); toast(T('runStale')); } // don't fast-forward through lights after a break
+    lastRib = 0;
     runMap = L.map('runmap', { zoomControl: false });
     addTiles(runMap);
     runMap.fitBounds(geo.flatMap(g => g.S.map(s => [s.lat, s.lng])), { padding: [28, 28] });
     for (const g of geo) g.lines = g.S.slice(0, -1).map((s, k) =>
-      L.polyline([[s.lat, s.lng], [g.S[k + 1].lat, g.S[k + 1].lng]], { weight: 8, lineCap: 'round', interactive: false }).addTo(runMap));
+      L.polyline([[s.lat, s.lng], [g.S[k + 1].lat, g.S[k + 1].lng]], { weight: 8, lineCap: 'butt', interactive: false }).addTo(runMap));
     const ids = new Set(geo.flatMap(g => g.r.via));
     for (const l of state.lights.filter(l => ids.has(l.id))) L.marker([l.lat, l.lng], {
       interactive: false, icon: L.divIcon({ className: '', html: `<div class="lightmk">${ring(l.id, 'sm')}</div>`, iconSize: [0, 0] }),
@@ -430,14 +443,13 @@ views.run = {
       const dt = Math.max(0, (t - (run.t || t)) / 1000);
       run.t = t;
       if (!run.at) { run.d -= (lastRec ?? sp.normal) * dt; if (run.d <= 0) { run.d = 0; run.at = true; } }
-      const lg = g.legs[run.leg];
-      if (run.at && lg.light && run.leg < g.legs.length - 1 && M.crossAt(ms[lg.light], t, sp.minLeft).t <= t) // crossed on green
-        Object.assign(run, { leg: run.leg + 1, d: g.legs[run.leg + 1].dist, at: false });
     }
     saveRun();
     const leg = g.legs[run.leg];
 
-    // 2. ribbons
+    // 2. ribbons (every ~2 s: they drift slowly and this is the heavy part)
+    if (t - lastRib >= 1900) {
+    lastRib = t;
     for (const x of geo) x.sim = x.S.map(s => M.simulate([{ dist: s.d, light: x.legs[s.leg].light }, ...x.legs.slice(s.leg + 1)], t, sp.normal, ms, sp.minLeft));
     const altBest = (x, k) => Math.min(Infinity, ...x.near[k].map(nb => nb.b.sim[nb.j].eta + nb.off / sp.normal * 1000));
     for (const x of geo) {
@@ -452,6 +464,7 @@ views.run = {
         line.setStyle({ color: BAND[band], opacity: faded ? 0.22 : 0.95, weight: faded ? 5 : 8 });
         if (!faded) line.bringToFront();
       });
+    }
     }
 
     // 3. me
@@ -499,19 +512,19 @@ views.run = {
     }
     if (d < 8) {
       const c = M.crossAt(m, t, sp.minLeft);
+      const sure = c.conf === 'high', ap = sure ? '' : '~';
       adv.innerHTML = c.t <= t
-        ? `<div class="pace go">${T('goNow')}</div><div class="sub">${T('secLeft', Math.floor(st.left))}</div>`
-        : `<div class="pace wait">${T('waitFor', dur(c.t - t))}</div><div class="sub">${m.kind === 'button' && !st.known ? T('pressBtn') : T('greenAt', hms(c.t))}</div>`;
+        ? `<div class="pace go">${T('greenExpected')}</div><div class="sub">${sure ? T('secLeft', Math.floor(st.left)) + ' · ' : ''}${T('checkSignal')}</div>`
+        : `<div class="pace wait">${T('waitFor', ap + dur(c.t - t))}</div><div class="sub">${m.kind === 'button' && !st.known ? T('pressBtn') : T('greenAt', ap + hms(c.t))}</div>`;
       return;
     }
-    const diff = p.rec.s - sp.normal, mood = diff > 0.1 ? 'hurry' : diff < -0.1 ? 'easy' : 'keep';
-    const lost = p.normal.eta - p.best;
+    const mood = p.mood;
     const you = n && gps.fix.speed != null ? ` · ${T('yourSpeed', kmh(gps.fix.speed))}` : '';
     adv.innerHTML = `
       <div class="advrow"><div class="pace ${mood}">${kmh(p.rec.s)} <small>${T('kmh')}</small></div>
       <div><div class="label">${T('mood_' + mood)}</div>
       <div class="sub">${p.rec.wait0 < 1500 ? T('arriveGreen') : T('waitThere', dur(p.rec.wait0))}${you}</div>
-      ${lost > 3000 ? `<div class="sub warn">${T('normalLoses', kmh(sp.normal), dur(lost))}</div>` : ''}</div></div>`;
+      ${mood === 'hurry' ? `<div class="sub warn">${T('normalLoses', kmh(sp.normal), dur(p.gain))}</div>` : ''}</div></div>`;
   },
 };
 acts.report = e => {
@@ -890,10 +903,10 @@ views.route = {
           <button class="icon" aria-label="${T('up')}" data-act="mv:${r.id}:${i}:-1" ${i ? '' : 'disabled'}>${ICON.up}</button>
           <button class="icon" aria-label="${T('down')}" data-act="mv:${r.id}:${i}:1" ${i < r.via.length - 1 ? '' : 'disabled'}>${ICON.down}</button>
           <button class="icon" aria-label="${T('remove')}" data-act="rmvia:${r.id}:${i}">${ICON.x}</button></li>`).join('') || `<p class="muted small">${T('noVia')}</p>`}</ol>
-        ${legs ? `<p class="muted small">${T('routeLen', meters(total), dur(total / speedOpts().normal * 1000))}</p>` : ''}</div>
+        ${legs ? `<p class="muted small">${T('routeLen', meters(total), Math.round(total / speedOpts().normal / 60))}</p>` : ''}</div>
       ${legs ? `<div class="field"><span>${T('pathTitle')}</span>
         <ul class="list plain">${legs.map(l => `<li><div class="grow">${esc(l.from.name)} → ${esc(l.to.name)}
-          <div class="muted small">${T(l.src === 'drawn' ? 'path_drawn' : l.src === 'osm' ? 'path_osm' : pathBusy ? 'path_busy' : 'path_none')} · ${meters(l.dist)}</div></div>
+          <div class="muted small">${T(l.src === 'drawn' ? 'path_drawn' : l.src === 'osm' ? 'path_osm' : pathBusy && !l.src ? 'path_busy' : 'path_none')} · ${meters(l.dist)}</div></div>
           ${l.src === 'drawn' ? `<button class="icon" aria-label="${T('undraw')}" data-act="undraw:${r.id}:${l.key}">${ICON.x}</button>` : ''}
           <button class="btn" data-act="draw:${r.id}:${l.key}">${T('draw')}</button></li>`).join('')}</ul>
         <p class="muted small">${T('pathHelp')}</p>
@@ -907,8 +920,9 @@ views.route = {
 
 // Street paths: each ~1 km cell of OSM streets is downloaded once and kept; streets rarely change.
 const OVERPASS = 'https://overpass-api.de/api/interpreter', CELL_MAX_AGE = 180 * 864e5;
+const MAX_CELLS = 12;      // a longer leg asks for too much of the map: keep it straight, the user can draw it
+const RETRY_NONE = 7 * 864e5;
 let pathBusy = false;
-const pathFailed = new Set(); // legs with no street path this session; don't retry on every render
 async function streetCell(k, fresh) {
   if (!fresh) { const c = await S.get('kv', 'osm:' + k); if (c && now() - c.t < CELL_MAX_AGE) return c; }
   let res = await fetch(OVERPASS, { method: 'POST', body: new URLSearchParams({ data: Streets.overpassQuery(k) }) });
@@ -925,30 +939,35 @@ async function ensurePaths(r, fresh = false) {
   const legs = M.routeLegs(r, byId());
   if (pathBusy || !legs) return;
   r.paths ||= {};
-  for (const k of Object.keys(r.paths)) if (!legs.some(l => l.key === k)) delete r.paths[k];
-  const todo = legs.filter(l => fresh ? l.src !== 'drawn' : !l.src && !pathFailed.has(l.key));
+  // drawn paths are kept even when their leg is gone (reordering lights would otherwise lose them)
+  for (const k of Object.keys(r.paths)) if (r.paths[k].src !== 'drawn' && !legs.some(l => l.key === k)) delete r.paths[k];
+  const todo = legs.filter(l => fresh ? l.src !== 'drawn'
+    : !l.src || (l.src === 'none' && now() - (r.paths[l.key].t || 0) > RETRY_NONE));
+  const tooBig = l => Streets.cellsFor(l.from, l.to).length > MAX_CELLS;
   if (!todo.length) return;
   pathBusy = true;
   if (cur.name === 'route') render();
   // download every needed cell first, two at a time (Overpass allows 2 parallel requests per user)
-  const got = new Map(), keys = [...new Set(todo.flatMap(l => Streets.cellsFor(l.from, l.to)))];
+  const got = new Map(), keys = [...new Set(todo.filter(l => !tooBig(l)).flatMap(l => Streets.cellsFor(l.from, l.to)))];
   for (let i = 0; i < keys.length; i += 2)
     await Promise.all(keys.slice(i, i + 2).map(k => streetCell(k, fresh).then(c => got.set(k, c), e => console.error(e))));
   let fail = 0;
   for (const l of todo) {
+    const none = () => { fail++; r.paths[l.key] = { src: 'none', t: now() }; };
+    if (tooBig(l)) { none(); continue; }
     try {
       const cells = Streets.cellsFor(l.from, l.to).map(k => got.get(k));
       if (cells.some(c => !c)) throw new Error('street data missing');
       const pts = Streets.shortest(cells, l.from, l.to);
-      if (pts) { r.paths[l.key] = { src: 'osm', pts }; pathFailed.delete(l.key); } else { fail++; pathFailed.add(l.key); }
-    } catch (e) { console.error(e); fail++; pathFailed.add(l.key); }
+      if (pts) r.paths[l.key] = { src: 'osm', pts }; else none();
+    } catch (e) { console.error(e); none(); }
   }
   pathBusy = false;
   commit();
-  toast(fail ? T('streetsSome', fail) : T('streetsOk'));
+  if (cur.name === 'route') toast(fail ? T('streetsSome') : T('streetsOk'));
   if (cur.name === 'route' && cur.id === r.id) render();
 }
-acts.refreshstreets = id => { pathFailed.clear(); ensurePaths(routeOf(id), true); };
+acts.refreshstreets = id => ensurePaths(routeOf(id), true);
 acts.routeplace = (id, field, el) => { routeOf(id)[field] = el.value; commit(); render(); };
 acts.mv = (id, i, d) => { const v = routeOf(id).via; i = +i; [v[i], v[i + +d]] = [v[i + +d], v[i]]; commit(); render(); };
 acts.rmvia = (id, i) => { routeOf(id).via.splice(+i, 1); commit(); render(); };
@@ -1011,10 +1030,12 @@ views.settings = {
 };
 acts.install = async () => { if (!installEvt) return; installEvt.prompt(); await installEvt.userChoice; installEvt = null; render(); };
 acts.export = async mode => {
-  const ph = await S.getAll('photos');
-  const { ui, ...rest } = state;
+  const { ui, ...rest } = state, all = await S.getAll('photos');
+  const data = mode === 'share' ? { lights: state.lights, places: [], routes: [] } : rest; // a share never carries home/work
+  const used = new Set(data.lights.flatMap(l => l.photos));
+  const ph = Object.fromEntries(Object.entries(all).filter(([k]) => used.has(k)));
   const name = `nickotime-${new Date().toISOString().slice(0, 10)}.json`;
-  const file = new File([JSON.stringify({ app: 'nickotime', v: 1, exported: new Date().toISOString(), state: rest, photos: ph })], name, { type: 'application/json' });
+  const file = new File([JSON.stringify({ app: 'nickotime', v: 1, exported: new Date().toISOString(), state: data, photos: ph })], name, { type: 'application/json' });
   if (mode === 'share' && navigator.canShare?.({ files: [file] })) {
     try { await navigator.share({ files: [file], title: 'Nickotime' }); } catch { /* user cancelled */ }
     return;
@@ -1033,20 +1054,21 @@ function cleanImport(data) {
   const num = x => typeof x === 'number' && isFinite(x);
   const str = (x, n = 200) => typeof x === 'string' ? x.slice(0, n) : '';
   const arr = x => Array.isArray(x) ? x : [];
-  const pt = p => str(p?.id) && num(p.lat) && num(p.lng);
+  const id = x => typeof x === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(x);
+  const pt = p => id(p?.id) && num(p.lat) && num(p.lng);
   return {
     lights: arr(s.lights).filter(pt).map(l => ({
-      id: str(l.id), name: str(l.name, 80), lat: l.lat, lng: l.lng, kind: l.kind === 'button' ? 'button' : 'fixed', notes: str(l.notes, 2000),
-      photos: arr(l.photos).filter(p => typeof p === 'string').map(p => p.slice(0, 40)),
+      id: l.id, name: str(l.name, 80), lat: l.lat, lng: l.lng, kind: l.kind === 'button' ? 'button' : 'fixed', notes: str(l.notes, 2000),
+      photos: arr(l.photos).filter(id),
       events: arr(l.events).filter(e => num(e?.t) && ['G', 'R', 'P'].includes(e.e)).map(e => ({ t: e.t, e: e.e })),
     })),
-    places: arr(s.places).filter(pt).map(p => ({ id: str(p.id), name: str(p.name, 60), lat: p.lat, lng: p.lng })),
-    routes: arr(s.routes).filter(r => str(r?.id)).map(r => ({ id: str(r.id), name: str(r.name, 60), from: str(r.from), to: str(r.to), via: arr(r.via).filter(v => typeof v === 'string').map(v => v.slice(0, 40)),
+    places: arr(s.places).filter(pt).map(p => ({ id: p.id, name: str(p.name, 60), lat: p.lat, lng: p.lng })),
+    routes: arr(s.routes).filter(r => id(r?.id) && id(r.from) && id(r.to)).map(r => ({ id: r.id, name: str(r.name, 60), from: r.from, to: r.to, via: arr(r.via).filter(id),
       paths: Object.fromEntries(Object.entries(r.paths && typeof r.paths === 'object' ? r.paths : {}).slice(0, 100)
-        .filter(([k, v]) => k.length <= 90 && ['osm', 'drawn'].includes(v?.src) && Array.isArray(v.pts) && v.pts.length >= 2 && v.pts.length <= 5000 && v.pts.every(p => Array.isArray(p) && num(p[0]) && num(p[1])))
+        .filter(([k, v]) => k.split('>').length === 2 && k.split('>').every(id) && ['osm', 'drawn'].includes(v?.src) && Array.isArray(v.pts) && v.pts.length >= 2 && v.pts.length <= 5000 && v.pts.every(p => Array.isArray(p) && num(p[0]) && num(p[1])))
         .map(([k, v]) => [k, { src: v.src, pts: v.pts.map(p => [p[0], p[1]]) }])) })),
     photos: Object.fromEntries(Object.entries(data.photos && typeof data.photos === 'object' ? data.photos : {})
-      .filter(([k, v]) => typeof v === 'string' && /^data:image\/(jpeg|png|webp);base64,/.test(v) && k.length <= 40)),
+      .filter(([k, v]) => id(k) && typeof v === 'string' && v.length < 4e6 && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+=*$/.test(v))),
   };
 }
 acts.import = async (input) => {
@@ -1074,7 +1096,7 @@ acts.import = async (input) => {
 acts.wipe = async () => {
   if (!await confirmDanger(T('wipeQ'), T('wipe'))) return;
   const lang = state.settings.lang;
-  await S.clear('photos');
+  await Promise.all([S.clear('photos'), S.clear('kv'), self.caches?.delete('tiles')]);
   photos = {};
   state = DEFAULT();
   state.settings.lang = lang;
@@ -1099,12 +1121,13 @@ function applyStatic() {
 async function boot() {
   try {
     state = Object.assign(DEFAULT(), await S.get('kv', 'state'));
-    photos = await S.getAll('photos'); // shortcut: all photos in memory; lazy-load if libraries grow past ~100 photos
   } catch (e) {
     console.error(e);
     state = DEFAULT();
+    readOnly = true;
     toast(T('storageFailed'));
   }
+  try { photos = await S.getAll('photos'); } catch (e) { console.error(e); photos = {}; } // shortcut: all photos in memory; lazy-load past ~100 photos
   state.settings = { ...DEFAULT().settings, ...state.settings };
   setLang(state.settings.lang || (/^en/i.test(navigator.language) ? 'en' : 'he'));
   applyStatic();

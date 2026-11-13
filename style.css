@@ -130,7 +130,7 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent); ou
 .cells { display: grid; grid-template-columns: repeat(40, 1fr); gap: 2px; }
 .cells i {
   height: 30px; border-radius: 3px; cursor: pointer;
-  background: hsl(calc(150 - 145 * var(--w, 0)) 62% calc(44% + 10% * var(--w, 0)));
+  background: hsl(calc(150 - 145 * var(--w, 0)) 62% calc(46% - 14% * var(--w, 0)));
 }
 .cells i.m { border-inline-start: 2px solid var(--card); }
 .cells i.unk { opacity: .55; }
@@ -162,7 +162,7 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent); ou
 .pace { font-size: 46px; font-weight: 800; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 .pace small { font-size: 18px; color: var(--muted); }
 .pace.small { font-size: 17px; font-weight: 600; max-width: 22em; }
-.pace.hurry { color: var(--amber); } .pace.easy { color: var(--accent); }
+.pace.hurry { color: var(--amber); } .pace.ease { color: var(--accent); }
 .pace.go { color: var(--green); } .pace.wait { color: var(--red); }
 .advice .warn { color: var(--amber); font-weight: 600; }
 .advice .you { font-size: 13px; color: var(--muted); margin-top: 4px; }

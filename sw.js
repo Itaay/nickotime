@@ -1,11 +1,11 @@
-// Offline: app files cache-first (bump V on release), map tiles cached as you view them.
-const V = 'nickotime-v3';
+// Offline: app files served from cache and refreshed in the background (bump V on release), map tiles cached as you view them.
+const V = 'nickotime-v4';
 const ASSETS = ['./', 'index.html', 'style.css', 'app.js', 'model.js', 'store.js', 'i18n.js', 'streets.js', 'manifest.webmanifest',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'vendor/leaflet/leaflet.js', 'vendor/leaflet/leaflet.css'];
 const TILES = 'tiles';
 const MAX_TILES = 3000;
 
-self.addEventListener('install', e => e.waitUntil(caches.open(V).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting())));
+self.addEventListener('install', e => e.waitUntil(caches.open(V).then(c => c.addAll(ASSETS.map(a => new Request(a, { cache: 'reload' })))).then(() => self.skipWaiting())));
 self.addEventListener('activate', e => e.waitUntil(
   caches.keys().then(ks => Promise.all(ks.filter(k => k !== V && k !== TILES).map(k => caches.delete(k)))).then(() => self.clients.claim())));
 
@@ -27,5 +27,11 @@ self.addEventListener('fetch', e => {
     return;
   }
   if (url.origin !== location.origin) return;
-  e.respondWith(caches.match(e.request, { ignoreSearch: true }).then(hit => hit || fetch(e.request)));
+  // stale-while-revalidate: instant offline start, and a fix reaches the phone on the next open
+  e.respondWith(caches.open(V).then(async c => {
+    const hit = await c.match(e.request, { ignoreSearch: true });
+    const net = fetch(e.request).then(r => { if (r.ok) c.put(e.request, r.clone()); return r; }).catch(() => hit);
+    if (hit) { e.waitUntil(net); return hit; }
+    return net;
+  }));
 });

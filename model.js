@@ -3,7 +3,7 @@
 
 const SESSION_GAP = 5 * 60e3;   // taps further apart than this belong to different visits
 const DOUBLE_TAP = 3e3;         // same-kind taps closer than this are one tap
-export const DETOUR = 1.25;     // shortcut: straight line x factor for street distance; upgrade to real routing if ever offline maps
+export const DETOUR = 1.25;     // straight line -> street distance, only for legs without a street or drawn path
 export const H = 3600e3;
 
 export const median = a => {
@@ -81,15 +81,20 @@ export function lightModel(light) {
     if (g && g.t - e.t < 180e3) delays.push((g.t - e.t) / 1000);
   });
   // Does the phase repeat across days at the same clock time (controller clock-synced)?
+  // Compared by phase relative to local midnight (a day is rarely a whole number of cycles), and only
+  // between visits at a similar clock time (each time-of-day plan has its own offset).
   const errs = [];
   const usable = sess.filter(s => s.anchor != null && s.C);
   for (let i = 0; i < usable.length; i++) for (let j = i + 1; j < usable.length; j++) {
     const a = usable[i], b = usable[j];
-    if (b.anchor - a.anchor < 12 * H || Math.abs(a.C - b.C) > 0.5) continue;
-    const x = mod((b.anchor - a.anchor) / 1000, a.C);
+    if (b.anchor - a.anchor < 12 * H || Math.abs(a.C - b.C) > 0.5 || todDist(a.anchor, b.anchor) > 60) continue;
+    const x = mod(todS(b.anchor) - todS(a.anchor), a.C);
     errs.push(Math.min(x, a.C - x));
   }
-  const repeat = !errs.length ? null : errs.some(e => e <= 4) ? true : errs.every(e => e > 8) ? false : null;
+  // a single match is often luck (8 s window out of a 60-120 s cycle): need 2+ pairs, mostly matching
+  const good = errs.filter(e => e <= 4).length;
+  const repeat = errs.length >= 2 && good / errs.length >= 2 / 3 ? true
+    : errs.length && good === 0 && errs.every(e => e > 8) ? false : null;
   return {
     kind: light.kind || 'fixed', C, Gd, sessions: sess, repeat,
     delay: median(delays), delayMax: delays.length ? Math.max(...delays) : null, nDelays: delays.length,
@@ -100,6 +105,7 @@ export function lightModel(light) {
 const dayClass = t => { const d = new Date(t).getDay(); return d === 5 ? 1 : d === 6 ? 2 : 0; }; // Sun-Thu / Fri / Sat
 const tod = t => { const d = new Date(t); return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60; };
 const todDist = (a, b) => { const x = Math.abs(tod(a) - tod(b)); return Math.min(x, 1440 - x); };
+const todS = t => { const d = new Date(t); return d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds() + d.getMilliseconds() / 1000; };
 
 // Choose the visit whose timing best represents time t: a recent one, else same clock time on a similar day.
 export function pick(m, t) {
@@ -107,13 +113,14 @@ export function pick(m, t) {
   for (const s of m.sessions) {
     if (s.anchor == null || !s.C || s.Gd == null) continue;
     const dt = Math.abs(t - s.anchor);
-    const score = dt < 3 * H ? dt / 60e3
-      : 180 + todDist(t, s.anchor) + (dayClass(t) !== dayClass(s.anchor) ? 240 : 0) + dt / (24 * H) * 2;
+    // the last hour wins; beyond that the same clock time (timing plan) matters more than recency
+    const score = dt < H ? dt / 120e3
+      : 20 + todDist(t, s.anchor) + (dayClass(t) !== dayClass(s.anchor) ? 240 : 0) + dt / (24 * H) * 2;
     if (score < bestScore) { bestScore = score; best = s; }
   }
   if (!best) return null;
   const dt = Math.abs(t - best.anchor);
-  const conf = dt < 0.5 * H ? 'high' : dt < 3 * H ? 'med' : m.repeat === true ? 'med' : 'low';
+  const conf = dt < 0.5 * H ? 'high' : dt < 3 * H ? 'med' : m.repeat === true && todDist(t, best.anchor) <= 60 ? 'med' : 'low';
   return { ...best, conf, age: dt };
 }
 
@@ -121,7 +128,8 @@ export function pick(m, t) {
 export function stateAt(m, t) {
   const p = m && pick(m, t);
   if (!p) return { known: false };
-  const ph = mod((t - p.anchor) / 1000, p.C);
+  // across days, project from the same clock time: survives DST and days that aren't whole cycles
+  const ph = mod(p.age > 12 * H ? todS(t) - todS(p.anchor) : (t - p.anchor) / 1000, p.C);
   const green = ph < p.Gd;
   return { known: true, green, left: green ? p.Gd - ph : p.C - ph, total: green ? p.Gd : p.C - p.Gd, conf: p.conf, C: p.C, Gd: p.Gd, age: p.age };
 }
@@ -159,24 +167,33 @@ export function simulate(legs, t0, speed, models, minLeft = 3) {
   return { eta: t, wait, at, unknown };
 }
 
-// Options for covering distance d to the next light, then the rest at normal speed.
-// Returns the slowest speed that still achieves the best ETA (no point rushing to wait later).
-export function pace(d, rest, t, models, { normal, min, max, step, minLeft = 3 }) {
-  const run = s => {
-    const arrive = t + d / s * 1000, c = crossAt(models[rest[0].light], arrive, minLeft);
-    return { s, eta: simulate(rest.slice(1), c.t, normal, models, minLeft).eta, wait0: c.t - arrive, cross: c.t };
+// What to do on the way to the next light (distance d), the rest at normal speed:
+// 'keep' your pace; 'ease' off to arrive as it turns green instead of waiting there; or 'hurry', but only
+// when that catches an earlier green (>10 s real gain) with green to spare and the forecast is fresh.
+export function pace(d, rest, t, models, { normal, min, max, step, minLeft = 3, margin = 8 }) {
+  const m = models[rest[0].light];
+  const run = (s, need = minLeft) => {
+    const arrive = t + d / s * 1000, c = crossAt(m, arrive, need);
+    return { s, cross: c.t, wait0: c.t - arrive, conf: c.conf, eta: simulate(rest.slice(1), c.t, normal, models, minLeft).eta };
   };
-  const opts = [];
-  for (let s = min; s <= max + 1e-9; s += step) opts.push(run(s));
-  const best = Math.min(...opts.map(o => o.eta));
-  return { rec: opts.find(o => o.eta <= best + 2000), best, normal: run(normal) };
+  const norm = run(normal);
+  let rec = norm, mood = 'keep';
+  if (norm.conf === 'high') for (let s = normal + step; s <= max + 1e-9; s += step) {
+    const o = run(s, Math.max(minLeft, margin));
+    if (o.wait0 < 1000 && o.eta < norm.eta - 10e3) { rec = o; mood = 'hurry'; break; }
+  }
+  if (mood === 'keep' && norm.wait0 > 1500 && d > 0) {
+    const s = d / ((norm.cross + 1000 - t) / 1000);
+    if (s >= min) { rec = run(s); mood = 'ease'; }
+  }
+  return { rec, normal: norm, mood, gain: norm.eta - rec.eta };
 }
 
 export function routeLegs(route, byId) {
   const pts = [byId[route.from], ...route.via.map(id => byId[id]), byId[route.to]];
   if (pts.some(p => !p || p.lat == null)) return null;
   return pts.slice(1).map((p, i) => {
-    const a = pts[i], key = `${a.id}>${p.id}`, path = route.paths?.[key]?.pts;
+    const a = pts[i], key = `${a.id}>${p.id}`, path = route.paths?.[key]?.pts; // src 'none' (no street found) has no pts
     // stored interior points, current endpoints (a light may have been moved since)
     const line = [[a.lat, a.lng], ...(path ? path.slice(1, -1) : []), [p.lat, p.lng]];
     return { key, dist: path ? pathLen(line) : haversine(a, p) * DETOUR, light: i < route.via.length ? p.id : null, from: a, to: p, pts: line, src: route.paths?.[key]?.src || null };

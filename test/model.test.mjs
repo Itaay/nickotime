@@ -38,12 +38,23 @@ assert.ok(Math.abs(c.t - (T0 + 6 * C * 1000)) < 1500);
 // double taps collapse
 assert.equal(M.sessions([{ t: 0, e: 'G' }, { t: 1000, e: 'G' }])[0].events.length, 1);
 
-// next-day repeat detection + same-clock-time pick
-const day2 = T0 + 24 * M.H + 10 * C * 1000; // 24h is 960 cycles of 90s, so phase lines up
-const m2 = M.lightModel({ id: 'a', events: [...taps(T0, 3), ...taps(day2, 2)] });
+// daily repeat: clock-synced light (same phase vs midnight every day) with a cycle that doesn't divide a day
+const C2 = 110, sync = day => T0 + day * 24 * M.H + 7 * C2 * 1000;
+const tapsC = (start, n) => Array.from({ length: n }, (_, k) => [{ t: start + k * C2 * 1000, e: 'G' }, { t: start + (k * C2 + 30) * 1000, e: 'R' }]).flat();
+const m2 = M.lightModel({ id: 'a', events: [...tapsC(sync(0), 3), ...tapsC(sync(1), 2), ...tapsC(sync(2), 2)] });
 assert.equal(m2.repeat, true);
-const p = M.pick(m2, T0 + 7 * 24 * M.H + 60e3); // a week later, same time of day
-assert.equal(p.conf, 'med');
+const week = sync(7) + 33 * C2 * 1000 + 12e3;                 // a week later, 12 s into green
+const s2 = M.stateAt(m2, week);
+assert.ok(s2.green && Math.abs(s2.left - 18) < 1.5 && s2.conf === 'med', JSON.stringify(s2));
+// one lucky match is not enough
+const m3 = M.lightModel({ id: 'a', events: [...tapsC(sync(0), 3), ...tapsC(sync(1), 2)] });
+assert.equal(m3.repeat, null);
+// random daily phase: not "repeats"
+const m4 = M.lightModel({ id: 'a', events: [0, 1, 2, 3].flatMap(d => tapsC(sync(d) + d * 37e3, 2)) });
+assert.notEqual(m4.repeat, true);
+// yesterday at the same clock time beats a visit 2.5 h earlier today
+const m5 = M.lightModel({ id: 'a', events: [...tapsC(sync(0), 2), ...tapsC(sync(1) - 2.5 * M.H, 2)] });
+assert.ok(Math.abs(M.pick(m5, sync(1)).anchor - sync(0)) < 3 * C2 * 1000);
 
 // button light: delay from press
 const b = M.lightModel({ id: 'b', kind: 'button', events: [{ t: 0, e: 'P' }, { t: 25e3, e: 'G' }, { t: 600e3, e: 'P' }, { t: 635e3, e: 'G' }] });
@@ -57,8 +68,19 @@ const legs = [{ dist: 140, light: 'a' }, { dist: 100, light: null }];
 const sim = M.simulate(legs, tStart, 1.4, models);   // arrive after 100s: green (10s into it)
 assert.equal(sim.at.length, 1);
 const pc = M.pace(70, legs, tStart, models, { normal: 1.4, min: 0.8, max: 2.2, step: 0.05 });
-// 70m at 1.4 m/s = 50s -> wait 10s; slower ~1.17 m/s gets there at green with same ETA
-assert.ok(pc.rec.s < 1.4 && pc.rec.eta <= pc.normal.eta + 2000 && pc.rec.wait0 < 1000, JSON.stringify(pc));
+// 70m at 1.4 m/s = 50s -> wait 10s; ease to ~1.15 m/s, arrive as it turns green, same ETA
+assert.ok(pc.mood === 'ease' && pc.rec.s < 1.4 && pc.rec.eta <= pc.normal.eta + 2000 && pc.rec.wait0 < 1000, JSON.stringify(pc));
+const so = { normal: 1.4, min: 0.8, max: 2.2, step: 0.05 };
+// arriving on green at normal pace: keep it (don't push to "arrive sooner")
+const tGreen = T0 + (5 * C) * 1000 - 40e3;                // green starts in 40 s, lasts 22 s
+assert.equal(M.pace(70, legs, tGreen, models, so).mood, 'keep');
+// normal arrives 2 s after green ends; hurrying catches it with 8 s+ left -> hurry, real gain
+const tMiss = T0 + (5 * C + G + 2) * 1000 - 50e3;
+const ph = M.pace(70, legs, tMiss, models, so);
+assert.ok(ph.mood === 'hurry' && ph.gain > 60e3, JSON.stringify(ph));
+// ...but not on a stale forecast
+const stale = M.lightModel({ id: 'a', events: taps(T0 - 5 * M.H, 3) });
+assert.notEqual(M.pace(70, legs, tMiss, { a: stale }, so).mood, 'hurry');
 
 // route sampling
 const rl = M.routeLegs({ from: 'A', via: ['a'], to: 'B' }, { A: { lat: 32, lng: 34.78 }, a: { id: 'a', lat: 32.001, lng: 34.78 }, B: { lat: 32.002, lng: 34.78 } });
